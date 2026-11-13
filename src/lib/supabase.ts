@@ -1,15 +1,17 @@
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL =
-  import.meta.env.VITE_SUPABASE_URL ?? import.meta.env.SUPABASE_URL;
-const ANON_KEY =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ?? import.meta.env.SUPABASE_ANON_KEY;
+const DEFAULT_SUPABASE_URL = "https://aisnmcgnblumuniotfcj.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_PMYK5d-_oI1VAWWCZ0Ccsw_g9Viso3u";
 
-if (!SUPABASE_URL || !ANON_KEY) {
-  throw new Error(
-    "Missing Supabase public environment variables. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.",
-  );
-}
+const SUPABASE_URL =
+  import.meta.env?.VITE_SUPABASE_URL ??
+  import.meta.env?.SUPABASE_URL ??
+  DEFAULT_SUPABASE_URL;
+
+const ANON_KEY =
+  import.meta.env?.VITE_SUPABASE_ANON_KEY ??
+  import.meta.env?.SUPABASE_ANON_KEY ??
+  DEFAULT_SUPABASE_ANON_KEY;
 
 export const publicClient = createClient(SUPABASE_URL, ANON_KEY, {
   auth: { persistSession: false },

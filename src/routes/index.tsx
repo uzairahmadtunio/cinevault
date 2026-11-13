@@ -7,7 +7,7 @@ import {
 import { SkeletonLoader } from "@/components/SkeletonLoader";
 import { fetchMoviesPaginated, getFilterCounts, fetchTrendingOrTopRated } from "@/lib/api/server.movies";
 import { ChevronLeft, ChevronRight, Search as SearchIcon, AlertCircle, SlidersHorizontal, X, Sparkles, Zap, Clapperboard, Globe, Film, Shield, Bookmark, TrendingUp } from "lucide-react";
-import { CURRENT_MIRROR_INDEX, BASE_DOMAIN, getActiveCatalogUrl } from "@/lib/utils/domainConfig";
+import { CURRENT_MIRROR_INDEX, BASE_DOMAIN, getActiveCatalogUrl, getCrossDomainCatalogUrl, isMirrorHostname } from "@/lib/utils/domainConfig";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -71,10 +71,7 @@ interface PremiumLandingPageProps {
 }
 
 function PremiumLandingPage({ }: PremiumLandingPageProps) {
-  const activeCatalogUrl = getActiveCatalogUrl();
-  const catalogHref = typeof window !== 'undefined' && (window.location.hostname === BASE_DOMAIN || window.location.hostname === `www.${BASE_DOMAIN}`)
-    ? `https://${activeCatalogUrl}/?view=catalog`
-    : `/?view=catalog`;
+  const catalogHref = (typeof window !== 'undefined' ? getCrossDomainCatalogUrl(window.location.hostname) : null) ?? `/?view=catalog`;
 
   const features = [
     {
@@ -372,6 +369,7 @@ function Home() {
   const hasDefaultCatalogQuery = !search && !category && !platform && !type && !genres && !years;
   const showCatalog =
     view === "catalog" ||
+    isMirrorHostname(hostname) ||
     (isDev && (page === 1 || hasDefaultCatalogQuery));
 
   // If on root landing domain, show simple landing page instead of catalog
@@ -381,11 +379,11 @@ function Home() {
   const showLandingOnly = !showCatalog && (
     hostname === BASE_DOMAIN ||
     hostname === `www.${BASE_DOMAIN}` ||
-    (!isDev && !/movie\.cinevault\.xyz$/i.test(hostname))
+    (!isDev && !isMirrorHostname(hostname))
   );
 
   // Catalog domain matching
-  const isCatalogDomain = showCatalog || /movie\.cinevault\.xyz$/i.test(hostname) || hostname.endsWith(".vercel.app") || isDev;
+  const isCatalogDomain = showCatalog || isMirrorHostname(hostname) || hostname.endsWith(".vercel.app") || isDev;
   
   // Outdated mirror detection
   const subdomainMatch = subdomainPrefix.match(/^(\d+)movie$/);

@@ -1,5 +1,8 @@
 import process from "node:process";
 
+const DEFAULT_SUPABASE_URL = "https://aisnmcgnblumuniotfcj.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_PMYK5d-_oI1VAWWCZ0Ccsw_g9Viso3u";
+
 // Server-only config. The .server.ts suffix prevents Vite from bundling
 // this file into the client — values here never reach the browser.
 //
@@ -19,8 +22,11 @@ import process from "node:process";
 export function getServerConfig() {
   return {
     nodeEnv: process.env.NODE_ENV,
-    supabaseUrl: process.env.SUPABASE_URL,
-    supabaseAnonKey: process.env.SUPABASE_ANON_KEY,
-    supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY,
+    supabaseUrl: process.env.SUPABASE_URL ?? DEFAULT_SUPABASE_URL,
+    supabaseAnonKey: process.env.SUPABASE_ANON_KEY ?? DEFAULT_SUPABASE_ANON_KEY,
+    supabaseServiceRoleKey:
+      process.env.SUPABASE_SERVICE_ROLE_KEY ??
+      process.env.SUPABASE_ANON_KEY ??
+      DEFAULT_SUPABASE_ANON_KEY,
   };
 }

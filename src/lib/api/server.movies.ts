@@ -32,27 +32,32 @@ export const fetchMoviesPaginated = createServerFn({ method: "POST" })
         query = query.eq("is_featured", true);
       }
 
+      // Default catalog view should not impose strict table-level filters that can empty the result set.
+      const hasDefaultView = !filter && !search.trim() && !data.genres && !data.years && mode === "all";
+
       // Apply filter categories (quality / platform / category / type)
-      if (filter.toLowerCase() === "4k" || filter.includes("4K")) {
-        query = query.ilike("quality", "4k");
-      } else if (filter === "FHD") {
-        query = query.eq("quality", "FHD");
-      } else if (filter === "Netflix") {
-        query = query.eq("platform", "Netflix");
-      } else if (filter === "Bollywood") {
-        query = query.eq("category", "Bollywood");
-      } else if (filter === "Hollywood") {
-        query = query.eq("category", "Hollywood");
-      } else if (filter === "South") {
-        query = query.eq("category", "South Indian");
-      } else if (filter === "Korean") {
-        query = query.eq("category", "Korean");
-      } else if (filter === "Bengali") {
-        query = query.eq("category", "Bengali");
-      } else if (filter === "Anime") {
-        query = query.eq("category", "Anime");
-      } else if (filter === "Series") {
-        query = query.eq("type", "series");
+      if (!hasDefaultView) {
+        if (filter.toLowerCase() === "4k" || filter.includes("4K")) {
+          query = query.ilike("quality", "4k");
+        } else if (filter === "FHD") {
+          query = query.eq("quality", "FHD");
+        } else if (filter === "Netflix") {
+          query = query.eq("platform", "Netflix");
+        } else if (filter === "Bollywood") {
+          query = query.eq("category", "Bollywood");
+        } else if (filter === "Hollywood") {
+          query = query.eq("category", "Hollywood");
+        } else if (filter === "South") {
+          query = query.eq("category", "South Indian");
+        } else if (filter === "Korean") {
+          query = query.eq("category", "Korean");
+        } else if (filter === "Bengali") {
+          query = query.eq("category", "Bengali");
+        } else if (filter === "Anime") {
+          query = query.eq("category", "Anime");
+        } else if (filter === "Series") {
+          query = query.eq("type", "series");
+        }
       }
 
       // Apply genre filters (OR filtering - match any genre)
@@ -84,21 +89,30 @@ export const fetchMoviesPaginated = createServerFn({ method: "POST" })
 
       // Apply sorting
       if (sort === "oldest") {
-        query = query.order("year", { ascending: true }).order("created_at", { ascending: true });
+        query = query.order("year", { ascending: true }).order("created_at", { ascending: true }).order("id", { ascending: true });
       } else if (sort === "top-rated") {
-        query = query.order("imdb_rating", { ascending: false, nullsFirst: false }).order("year", { ascending: false });
+        query = query.order("imdb_rating", { ascending: false, nullsFirst: false }).order("year", { ascending: false }).order("created_at", { ascending: false });
       } else if (sort === "a-z") {
-        query = query.order("title", { ascending: true });
+        query = query.order("title", { ascending: true }).order("created_at", { ascending: false });
       } else {
-        // "latest" (default): newest releases first by year, then by insertion date
-        query = query.order("year", { ascending: false }).order("created_at", { ascending: false });
+        // "latest" (default): newest records first, while keeping the full catalog visible by default.
+        query = query.order("created_at", { ascending: false }).order("id", { ascending: false });
       }
 
       // Apply pagination
-      const { data: rows, count } = await query.range(offset, offset + limit - 1);
+      const { data: rows, count, error } = await query.range(offset, offset + limit - 1);
+      if (error) {
+        console.error(
+          "Supabase fetchMoviesPaginated query failed:",
+          JSON.stringify(error, Object.getOwnPropertyNames(error), 2),
+        );
+        return { movies: [], total: 0, page, limit };
+      }
+
+      console.log("Fetched movies count:", rows?.length ?? 0);
       return { movies: rows || [], total: count || 0, page, limit };
     } catch (err) {
-      console.error("fetchMoviesPaginated error", err);
+      console.error("fetchMoviesPaginated error:", err instanceof Error ? err.stack ?? err.message : err);
       return { movies: [], total: 0, page: 1, limit: 20 };
     }
   });

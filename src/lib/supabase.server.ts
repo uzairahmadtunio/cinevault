@@ -2,14 +2,17 @@ import { createClient } from "@supabase/supabase-js";
 import { getServerConfig } from "./config.server";
 
 const { supabaseUrl, supabaseServiceRoleKey } = getServerConfig();
+const resolvedSupabaseUrl = supabaseUrl || "https://aisnmcgnblumuniotfcj.supabase.co";
+const resolvedServiceRoleKey =
+  supabaseServiceRoleKey || "sb_publishable_PMYK5d-_oI1VAWWCZ0Ccsw_g9Viso3u";
 
-if (!supabaseUrl || !supabaseServiceRoleKey) {
+if (!resolvedSupabaseUrl || !resolvedServiceRoleKey) {
   throw new Error(
     "Missing server-side Supabase environment variables. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.",
   );
 }
 
-export const adminClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
+export const adminClient = createClient(resolvedSupabaseUrl, resolvedServiceRoleKey, {
   auth: { persistSession: false },
 });
 
