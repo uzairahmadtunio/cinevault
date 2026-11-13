@@ -20,7 +20,10 @@ export const Route = createFileRoute("/")({
   }),
   validateSearch: (search: Record<string, unknown>) => ({
     view: (search.view as string) || undefined,
-    page: Number(search.page) || 1,
+    // NOTE: do NOT default page to 1 here — validateSearch canonicalization
+    // force-redirects every bare URL to ?page=1 (307), and that redirect step
+    // fails on some networks/browsers (ERR_FAILED). Home defaults page to 1.
+    page: Number(search.page) || undefined,
     category: (search.category as string) || undefined, // handles '4k', 'fhd', 'anime', 'kdrama', 'adult'
     platform: (search.platform as string) || undefined, // handles 'netflix', 'amazon', 'hbo', etc.
     type: (search.type as string) || undefined,         // handles 'movie', 'series'
