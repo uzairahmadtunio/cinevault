@@ -359,21 +359,39 @@ function Home() {
   
   // ---- Multi-domain detection ----
   const hostname = typeof window !== 'undefined' ? window.location.hostname : '';
+  const port = typeof window !== 'undefined' ? window.location.port : '';
   const subdomainPrefix = hostname.split('.')[0];
-  const isDev = hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '' || hostname.startsWith('192.168.');
-  
+  const isDev =
+    hostname === "localhost" ||
+    hostname === "127.0.0.1" ||
+    hostname === "" ||
+    hostname.startsWith("10.") ||
+    hostname.startsWith("192.168.") ||
+    hostname.startsWith("172.") ||
+    port === "8080";
+  const hasDefaultCatalogQuery = !search && !category && !platform && !type && !genres && !years;
+  const showCatalog =
+    view === "catalog" ||
+    (isDev && (page === 1 || hasDefaultCatalogQuery));
+
   // If on root landing domain, show simple landing page instead of catalog
-  const showLandingOnly = hostname === BASE_DOMAIN || hostname === `www.${BASE_DOMAIN}`;
-  
+  // NOTE (2026-11-13, on Uzair's order): landing-first also applies on the
+  // vercel.app deployment — root shows the decoy landing, catalog opens via
+  // ?view=catalog (Explore Movies button), exactly like the original setup.
+  const showLandingOnly = !showCatalog && (
+    hostname === BASE_DOMAIN ||
+    hostname === `www.${BASE_DOMAIN}` ||
+    (!isDev && !/movie\.cinevault\.xyz$/i.test(hostname))
+  );
+
   // Catalog domain matching
-  const isCatalogDomain = /movie\.cinevault\.xyz$/i.test(hostname) || hostname.endsWith(".vercel.app") || isDev;
+  const isCatalogDomain = showCatalog || /movie\.cinevault\.xyz$/i.test(hostname) || hostname.endsWith(".vercel.app") || isDev;
   
   // Outdated mirror detection
   const subdomainMatch = subdomainPrefix.match(/^(\d+)movie$/);
   const currentMirrorNum = subdomainMatch ? parseInt(subdomainMatch[1], 10) : null;
   const isOutdatedMirror = currentMirrorNum !== null && currentMirrorNum < CURRENT_MIRROR_INDEX;
 
-  const showCatalog = view === "catalog";
   const sortBy = sort || "latest";
 
   // ============================================================================
@@ -615,7 +633,9 @@ function Home() {
   // ============================================================================
   // CONDITIONAL RENDERING (no early return - JSX level only)
   // ============================================================================
-  if (showLandingOnly || !isCatalogDomain || !showCatalog) {
+  if (showCatalog) {
+    // Force the catalog view when the explicit view parameter is present.
+  } else if (showLandingOnly || !isCatalogDomain) {
     return <PremiumLandingPage />;
   }
 
