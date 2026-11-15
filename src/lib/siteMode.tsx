@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, type ReactNode } from "react";
 
 // ============================================================================
 // FUTURE PREMIUM GROUNDWORK — single gate for Stream Mode.
@@ -17,20 +17,24 @@ type SiteModeCtx = { mode: SiteMode; setMode: (m: SiteMode) => void };
 
 const SiteModeContext = createContext<SiteModeCtx>({ mode: "download", setMode: () => {} });
 
-export function SiteModeProvider({ children }: { children: ReactNode }) {
-  // Default is Download Mode (the classic experience). The saved choice is
-  // applied after mount from localStorage so SSR/first paint never mismatches.
-  const [mode, setModeState] = useState<SiteMode>("download");
+function readSavedMode(): SiteMode {
+  // Client: read the saved choice synchronously so the very first render
+  // already reflects it (round 1 applied it in an effect, which made the
+  // toggle and stream-mode UI "mount late" / flicker). Server: default.
+  if (typeof window === "undefined") return "download";
+  try {
+    const saved = window.localStorage.getItem(STORAGE_KEY);
+    if (saved === "stream" && STREAM_MODE_FREE) return "stream";
+  } catch {
+    /* storage unavailable — stay in Download Mode */
+  }
+  return "download";
+}
 
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved === "stream" && STREAM_MODE_FREE) setModeState("stream");
-      else if (saved === "download") setModeState("download");
-    } catch {
-      /* storage unavailable — stay in Download Mode */
-    }
-  }, []);
+export function SiteModeProvider({ children }: { children: ReactNode }) {
+  // Default is Download Mode (the classic experience); a returning visitor's
+  // saved Stream Mode applies from the first client render, not after mount.
+  const [mode, setModeState] = useState<SiteMode>(readSavedMode);
 
   const setMode = (m: SiteMode) => {
     if (m === "stream" && !STREAM_MODE_FREE) return; // gated off by the flag

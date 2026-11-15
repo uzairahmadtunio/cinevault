@@ -7,7 +7,7 @@ import {
 import { publicClient, qualityColor, FALLBACK_MOVIES, FEATURED_FALLBACK, cleanTitle, type Movie, type EpisodeLink } from "@/lib/supabase";
 import { fetchFeaturedOrLatest } from "@/lib/api/server.movies";
 import { STREAM_MODE_FREE, useSiteMode } from "@/lib/siteMode";
-import { pickBestQualityLink, validRating } from "@/lib/mediaHelpers";
+import { pickCardStream, validRating } from "@/lib/mediaHelpers";
 import { buildStreamUrl } from "@/utils/linkBypasser";
 import { fuzzyFind, getSearchIndex, type SearchIndexItem } from "@/lib/searchIndex";
 
@@ -62,18 +62,20 @@ export function MovieCard({ movie, className = "", aspect = "2/3" }: { movie: Pa
 
   const aspectStyle = aspect === "16/9" ? { aspectRatio: "16 / 9" } : { aspectRatio: "2 / 3" };
   const rating = validRating(movie.imdb_rating);
-  // In Stream Mode a card click plays the title directly (best valid quality);
-  // in Download Mode — or when no playable link exists — it opens the detail page.
-  const bestStream = mode === "stream" ? pickBestQualityLink(movie) : null;
+  // In Stream Mode a card click plays the title directly (best valid quality,
+  // falling back to the first playable episode for series); in Download Mode —
+  // or when no playable link exists — it opens the detail page.
+  const cardStream = mode === "stream" ? pickCardStream(movie) : null;
 
   const goDetail = () => navigate({ to: "/movie/$id", params: { id: String(movie.id) } });
   const handleClick = () => {
-    if (mode === "stream" && bestStream) {
+    if (mode === "stream" && cardStream) {
       window.location.assign(
-        buildStreamUrl(bestStream.url, {
+        buildStreamUrl(cardStream.url, {
           id: movie.id,
           title: cleanTitle(movie.title),
           poster: thumb,
+          ep: cardStream.ep,
         }),
       );
     } else {
@@ -112,14 +114,19 @@ export function MovieCard({ movie, className = "", aspect = "2/3" }: { movie: Pa
             <Star size={10} fill="currentColor" /> {rating.toFixed(1)}
           </div>
         )}
-        {mode === "stream" && bestStream && (
+        {mode === "stream" && cardStream && (
           <>
-            {/* Play overlay */}
+            {/* Play overlay (hover, desktop) */}
             <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
               <span className="w-12 h-12 rounded-full bg-[#06B6D4]/90 shadow-[0_0_20px_rgba(6,182,212,0.5)] flex items-center justify-center text-white">
                 <Play size={20} fill="currentColor" className="ml-0.5" />
               </span>
             </div>
+            {/* Always-visible play badge — touch devices have no hover, so the
+                Stream Mode affordance must not depend on it. */}
+            <span className="absolute bottom-2 left-2 z-10 w-8 h-8 rounded-full bg-[#06B6D4] shadow-[0_0_14px_rgba(6,182,212,0.55)] flex items-center justify-center text-white pointer-events-none">
+              <Play size={14} fill="currentColor" className="ml-0.5" />
+            </span>
             {/* Info affordance: still reach the detail page in Stream Mode */}
             <button
               type="button"
@@ -167,6 +174,7 @@ export function ModeToggle() {
       className="flex items-center rounded-full border border-[rgba(14,165,233,0.35)] bg-[#0D1321] p-0.5 text-[10px] sm:text-[11px] font-bold"
       role="group"
       aria-label="Site mode: switch between Download and Stream"
+      suppressHydrationWarning
     >
       <button
         type="button"

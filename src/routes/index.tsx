@@ -2,7 +2,7 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   SiteShell, HeroSlider, NoticeBanner, TrendingSection,
-  MovieGrid, FALLBACK_MOVIES, titlePosterDataUrl, type Movie,
+  MovieGrid, MovieCard, FALLBACK_MOVIES, titlePosterDataUrl, type Movie,
 } from "@/components/cinevault";
 import { SkeletonLoader } from "@/components/SkeletonLoader";
 import { fetchMoviesPaginated, getFilterCounts, fetchTrendingOrTopRated } from "@/lib/api/server.movies";
@@ -687,6 +687,14 @@ function Home() {
     return candidate;
   }, [search, loading, movies, searchIdx]);
 
+  // When the server search finds nothing at all, fall back to the local fuzzy
+  // index and render the closest titles as results (typo'd searches like
+  // "Moblnd" must still land on MobLand, not a dead-end empty state).
+  const fuzzyFallback = useMemo(() => {
+    if (!search || loading || movies.length > 0 || !searchIdx.length) return [];
+    return fuzzyFind(searchIdx, search, 12);
+  }, [search, loading, movies, searchIdx]);
+
   // ============================================================================
   // CONDITIONAL RENDERING (no early return - JSX level only)
   // ============================================================================
@@ -874,6 +882,32 @@ function Home() {
           ) : movies.length > 0 ? (
             /* Movie Catalog Grid */
             <MovieGrid movies={movies} loading={false} />
+          ) : fuzzyFallback.length > 0 ? (
+            /* Fuzzy fallback: the exact search found nothing, but close
+               titles exist — show them instead of a dead end. */
+            <div>
+              <p className="text-center text-sm text-[#94A3B8] mb-6">
+                No exact matches for &ldquo;{search}&rdquo; — closest titles in the catalog:
+              </p>
+              <div className="px-2 sm:px-4 md:px-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2.5 sm:gap-4 justify-items-center">
+                {fuzzyFallback.map((h) => (
+                  <MovieCard
+                    key={h.item.id}
+                    movie={{ id: h.item.id, title: h.item.title, thumbnail: h.item.thumbnail, year: h.item.year }}
+                    className="w-full"
+                  />
+                ))}
+              </div>
+              <div className="text-center mt-8">
+                <button
+                  onClick={handleResetAll}
+                  className="inline-flex items-center gap-2 px-6 py-2.5 bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-600 hover:to-cyan-500 text-white rounded-lg font-bold shadow-lg hover:scale-105 transition duration-300 text-xs tracking-wide uppercase cursor-pointer"
+                  style={{ boxShadow: "0 0 15px rgba(6, 182, 212, 0.2)" }}
+                >
+                  Reset Search
+                </button>
+              </div>
+            </div>
           ) : (
             /* Custom NO MATCHES overlay placeholder */
             <div className="text-center py-20 bg-[#0D1321] border border-cyan-500/10 rounded-2xl p-8 max-w-xl mx-auto animate-fade-up">

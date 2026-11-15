@@ -111,6 +111,28 @@ function levenshtein(a: string, b: string, maxDist: number): number {
 
 export type FuzzyHit = { item: SearchIndexItem; score: number };
 
+/** Score one query token against one title token.
+ *  Round-1 scoring let 1-letter title tokens ("m" from "I'm", "a", "s") match
+ *  ANY query token by prefix for 6 points — more than a genuine 1-typo match
+ *  (5) — so junk titles crowded real typo matches (e.g. "Moblnd") out of the
+ *  results entirely. Rules now: prefix games need tokens of length >= 3, and
+ *  a 1-edit typo of a real token is the strongest fuzzy signal. */
+function tokenScore(qt: string, tt: string): number {
+  if (tt === qt) return 12;
+  if (qt.length >= 3 && tt.length >= 3) {
+    if (tt.startsWith(qt)) return 8; // user is still typing the word
+    if (tt.includes(qt)) return 5;
+  }
+  if (qt.length >= 4 && tt.length >= 4 && qt.startsWith(tt)) return 5;
+  const maxD = qt.length >= 5 ? 2 : 1;
+  if (Math.abs(tt.length - qt.length) <= maxD) {
+    const d = levenshtein(qt, tt, maxD);
+    if (d === 1) return 9; // single typo — e.g. "moblnd" vs "mobland"
+    if (d === 2) return 5;
+  }
+  return 0;
+}
+
 /** Typo-tolerant matching: exact/prefix/substring token matches score high;
  *  tokens within Levenshtein distance 1–2 still match, so "Moblnd" finds
  *  "MobLand" and "Avengrs" finds "Avengers". */
@@ -131,19 +153,9 @@ export function fuzzyFind(index: SearchIndexItem[], query: string, limit = 8): F
     for (const qt of qTokens) {
       let best = 0;
       for (const tt of item.tokens) {
-        if (tt === qt) {
-          best = 10;
-          break;
-        }
-        if (tt.startsWith(qt) || (qt.length >= 3 && qt.startsWith(tt))) best = Math.max(best, 6);
-        else if (qt.length >= 3 && tt.includes(qt)) best = Math.max(best, 4);
-        else {
-          const maxD = qt.length >= 5 ? 2 : 1;
-          if (Math.abs(tt.length - qt.length) <= maxD) {
-            const d = levenshtein(qt, tt, maxD);
-            if (d <= maxD) best = Math.max(best, d === 1 ? 5 : 3);
-          }
-        }
+        const s = tokenScore(qt, tt);
+        if (s > best) best = s;
+        if (best === 12) break;
       }
       if (best === 0) {
         allTokensMatched = false;

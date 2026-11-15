@@ -107,6 +107,22 @@ export function episodeBestLink(ep: RawEpisode): string | null {
   return null;
 }
 
+/** The stream a catalog card should open in Stream Mode: the title's best
+ *  top-level quality link; for series whose links live only inside episodes,
+ *  the first episode with a playable link (with its episode number). */
+export function pickCardStream(
+  movie?: Partial<Movie> | null,
+): { url: string; ep: number | null } | null {
+  const top = pickBestQualityLink(movie);
+  if (top) return { url: top.url, ep: null };
+  const episodes = parseEpisodes(movie);
+  for (let i = 0; i < episodes.length; i++) {
+    const url = episodeBestLink(episodes[i]);
+    if (url) return { url, ep: episodeNumber(episodes[i], i) };
+  }
+  return null;
+}
+
 /** The valid per-quality links of one episode, in display order. */
 export function episodeQualityLinks(ep: RawEpisode): QualityLink[] {
   return QUALITY_FIELDS.filter((q) => isValidStreamTarget(ep?.[q.field])).map((q) => ({

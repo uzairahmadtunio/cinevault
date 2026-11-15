@@ -6,7 +6,7 @@ import { fetchMovieById, fetchMovies } from "@/lib/api/server.movies";
 import { buildStreamUrl } from "@/utils/linkBypasser";
 import {
   cleanFileSize, episodeDisplayTitle, episodeNumber, episodeQualityLinks,
-  parseEpisodes, pickBestQualityLink, validQualities, validRating,
+  parseEpisodes, pickBestQualityLink, pickCardStream, validQualities, validRating,
 } from "@/lib/mediaHelpers";
 import { useSiteMode } from "@/lib/siteMode";
 
@@ -133,6 +133,9 @@ function MovieDetail() {
   const episodes = parseEpisodes(movie);
   const qualities = validQualities(movie);
   const bestLink = pickBestQualityLink(movie);
+  // For series, Watch Now targets the best top-level link, else Episode 1's
+  // first playable link — computed from the same helper the cards use.
+  const seriesStream = isSeries ? pickCardStream(movie) : null;
   const rating = validRating(movie.imdb_rating);
 
   const leftRows: Array<[string, React.ReactNode]> = [];
@@ -180,11 +183,12 @@ function MovieDetail() {
       </div>
       <div className="max-w-5xl mx-auto px-4 md:px-8 -mt-16 relative z-10">
         <div className="flex items-end gap-4 sm:gap-5">
-          {/* Poster thumbnail in the header (previously banner-only) */}
+          {/* Poster thumbnail in the header — always visible (round 1 hid it
+              below the sm breakpoint, so phones showed banner only). */}
           <img
             src={posterSrc || titlePosterDataUrl(movie.title)}
             alt={cleanTitle(movie.title)}
-            className="hidden sm:block w-28 md:w-36 aspect-[2/3] object-cover rounded-lg border border-[rgba(14,165,233,0.35)] shadow-[0_10px_30px_rgba(0,0,0,0.6)] shrink-0 bg-[#0D1321]"
+            className="block w-20 sm:w-28 md:w-36 aspect-[2/3] object-cover rounded-lg border border-[rgba(14,165,233,0.35)] shadow-[0_10px_30px_rgba(0,0,0,0.6)] shrink-0 bg-[#0D1321]"
           />
           <div className="min-w-0 flex-1">
             <h1 className="text-3xl md:text-5xl font-extrabold text-white drop-shadow">{cleanTitle(movie.title)}</h1>
@@ -230,6 +234,20 @@ function MovieDetail() {
 
         {isSeries ? (
           <>
+            {seriesStream && (
+              <>
+                <h2 className="mt-8 mb-3 text-lg font-bold text-[#F1F5F9]">Watch</h2>
+                <div className="flex flex-wrap items-center gap-3 mb-2">
+                  <button
+                    onClick={() => goToPlayer(seriesStream.url, seriesStream.ep ?? undefined)}
+                    className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg bg-[#06B6D4] hover:bg-[#0891B2] text-white font-bold text-base shadow-[0_0_25px_rgba(6,182,212,0.35)] transition hover:scale-[1.02] cursor-pointer"
+                  >
+                    <Play size={20} fill="currentColor" /> Watch Now
+                    {seriesStream.ep != null ? ` — Episode ${String(seriesStream.ep).padStart(2, "0")}` : ""}
+                  </button>
+                </div>
+              </>
+            )}
             <h2 className="mt-8 mb-3 text-lg font-bold text-[#F1F5F9]">
               Episodes {movie.season_number ? `— Season ${movie.season_number}` : ""}
             </h2>
@@ -313,6 +331,19 @@ function MovieDetail() {
           </>
         ) : (
           <>
+            {/* Watch Now is offered in BOTH modes (round 1 showed it only in
+                Stream Mode, so the default Download Mode had no way to play). */}
+            {bestLink && (
+              <>
+                <h2 className="mt-8 mb-3 text-lg font-bold text-[#F1F5F9]">Watch</h2>
+                <button
+                  onClick={() => goToPlayer(bestLink.url)}
+                  className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg bg-[#06B6D4] hover:bg-[#0891B2] text-white font-bold text-base shadow-[0_0_25px_rgba(6,182,212,0.35)] transition hover:scale-[1.02] cursor-pointer"
+                >
+                  <Play size={20} fill="currentColor" /> Watch Now
+                </button>
+              </>
+            )}
             <h2 className="mt-8 mb-3 text-lg font-bold text-[#F1F5F9]">Download Links</h2>
             {qualities.length > 0 ? (
               <div className="flex flex-wrap gap-3">

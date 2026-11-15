@@ -2,6 +2,24 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { adminClient } from "@/lib/supabase.server";
 
+/* Stored file_size values come from scrapers and can carry stray brackets
+ * (e.g. "308.78 MB]"). Sanitize HERE, at the API layer, so every client
+ * render site receives a clean value no matter which page displays it. */
+function cleanSizeValue(raw: unknown): string | null {
+  if (raw == null) return null;
+  const s = String(raw).trim().replace(/^[\[\s]+/, "").replace(/[\]\[\s]+$/g, "").trim();
+  return s || null;
+}
+function sanitizeMovie<T extends Record<string, any>>(m: T): T {
+  if (m && typeof m === "object" && "file_size" in m) {
+    return { ...m, file_size: cleanSizeValue((m as any).file_size) };
+  }
+  return m;
+}
+function sanitizeMovies<T extends Record<string, any>>(rows: T[] | null | undefined): T[] {
+  return (rows || []).map(sanitizeMovie);
+}
+
 // Paginated fetch with filtering, sorting, search, genres, and years
 export const fetchMoviesPaginated = createServerFn({ method: "POST" })
   .validator(z.object({
@@ -110,7 +128,7 @@ export const fetchMoviesPaginated = createServerFn({ method: "POST" })
       }
 
       console.log("Fetched movies count:", rows?.length ?? 0);
-      return { movies: rows || [], total: count || 0, page, limit };
+      return { movies: sanitizeMovies(rows), total: count || 0, page, limit };
     } catch (err) {
       console.error("fetchMoviesPaginated error:", err instanceof Error ? err.stack ?? err.message : err);
       return { movies: [], total: 0, page: 1, limit: 20 };
@@ -204,7 +222,7 @@ export const fetchMovies = createServerFn({ method: "POST" })
           remainingLimit -= batchRows.length;
           if (batchRows.length < batchSize) break;
         }
-        return { movies: allRows, count };
+        return { movies: sanitizeMovies(allRows), count };
       }
       if (mode === "featured") {
         let allRows: any[] = [];
@@ -226,7 +244,7 @@ export const fetchMovies = createServerFn({ method: "POST" })
           remainingLimit -= batchRows.length;
           if (batchRows.length < batchSize) break;
         }
-        return { movies: allRows, count };
+        return { movies: sanitizeMovies(allRows), count };
       }
       if (mode === "search") {
         const q = data.q || "";
@@ -249,7 +267,7 @@ export const fetchMovies = createServerFn({ method: "POST" })
           remainingLimit -= batchRows.length;
           if (batchRows.length < batchSize) break;
         }
-        return { movies: allRows, count };
+        return { movies: sanitizeMovies(allRows), count };
       }
       // default: all ordered by created_at desc
       let allRows: any[] = [];
@@ -270,7 +288,7 @@ export const fetchMovies = createServerFn({ method: "POST" })
         remainingLimit -= batchRows.length;
         if (batchRows.length < batchSize) break;
       }
-      return { movies: allRows, count };
+      return { movies: sanitizeMovies(allRows), count };
     } catch (err) {
       console.error("fetchMovies error", err);
       return { movies: [], count: 0 };
@@ -282,7 +300,7 @@ export const fetchMovieById = createServerFn({ method: "POST" })
   .handler(async ({ data }) => {
     try {
       const { data: row } = await adminClient.from("movies").select("*").eq("id", data.id).maybeSingle();
-      return { movie: row || null };
+      return { movie: row ? sanitizeMovie(row) : null };
     } catch (err) {
       console.error("fetchMovieById error", err);
       return { movie: null };
@@ -303,7 +321,7 @@ export const fetchFeaturedOrLatest = createServerFn({ method: "POST" })
         .limit(limit);
       
       if (featured && featured.length > 0) {
-        return { movies: featured };
+        return { movies: sanitizeMovies(featured) };
       }
       
       // Fallback to latest
@@ -313,7 +331,7 @@ export const fetchFeaturedOrLatest = createServerFn({ method: "POST" })
         .order("created_at", { ascending: false })
         .limit(limit);
       
-      return { movies: latest || [] };
+      return { movies: sanitizeMovies(latest) };
     } catch (err) {
       console.error("fetchFeaturedOrLatest error", err);
       return { movies: [] };
@@ -334,7 +352,7 @@ export const fetchTrendingOrTopRated = createServerFn({ method: "POST" })
         .limit(limit);
       
       if (trending && trending.length > 0) {
-        return { movies: trending };
+        return { movies: sanitizeMovies(trending) };
       }
       
       // Fallback to top-rated by IMDb
@@ -345,7 +363,7 @@ export const fetchTrendingOrTopRated = createServerFn({ method: "POST" })
         .order("imdb_rating", { ascending: false })
         .limit(limit);
       
-      return { movies: topRated || [] };
+      return { movies: sanitizeMovies(topRated) };
     } catch (err) {
       return {
         all: 0,
