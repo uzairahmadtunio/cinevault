@@ -28,7 +28,7 @@ function SeriesPage() {
   const navigate = Route.useNavigate();
   const [movies, setMovies] = useState<Movie[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true); // F5: no "No series found" flash before first fetch
 
   useEffect(() => {
     (async () => {
@@ -54,7 +54,7 @@ function SeriesPage() {
           📺 Web Series
         </h1>
         <p className="text-[#64748B] text-sm mb-6">
-          {total > 0 ? `Showing ${start}-${end} of ${total} titles` : "No series found"}
+          {total > 0 ? `Showing ${start}-${end} of ${total} titles` : loading ? "Loading series…" : "No series found"}
         </p>
 
         {loading ? <SkeletonLoader /> : movies.length > 0 ? <MovieGrid movies={movies} loading={false} /> : (

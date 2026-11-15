@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, Play, X } from "lucide-react";
+import { ArrowLeft, Download, Play, X } from "lucide-react";
 import { QualityBadge, titlePosterDataUrl } from "@/components/cinevault";
 import { cleanTitle, type Movie } from "@/lib/supabase";
 import {
@@ -8,12 +8,17 @@ import {
   fetchTrendingOrTopRated,
 } from "@/lib/api/server.movies";
 import {
+  bestVariant,
   cleanFileSize,
   episodeBestLink,
   episodeDisplayTitle,
   episodeNumber,
+  metaGenres,
   parseEpisodes,
   pickCardStream,
+  playableLinkCount,
+  runtimeLabel,
+  titleKey,
   validQualities,
   validRating,
 } from "@/lib/mediaHelpers";
@@ -21,12 +26,70 @@ import { buildStreamUrl } from "@/utils/linkBypasser";
 import { continueWatchingUrl, findContinueWatching, loadContinueWatching } from "@/lib/continueWatching";
 import { MyListButton } from "./MyListButton";
 import { TrailerHero } from "./TrailerHero";
+import { GlanceChips } from "./StreamHome";
+import { Top10Ribbon, useTop10Rank } from "./Top10Context";
 
 type Props = {
   movieId: string | null;
   onClose: () => void;
   onOpenTitle: (id: string) => void;
 };
+
+/** More Like This card — carries the Top 10 ribbon when the title is
+ *  in today's Top 10 (implication #10) and the standardised metadata
+ *  order (Year · Rating · Quality, implication #9). */
+function RelatedCard({
+  movie: m,
+  onOpenTitle,
+}: {
+  movie: Movie;
+  onOpenTitle: (id: string) => void;
+}) {
+  const mDisplay = cleanTitle(m.title) || m.title;
+  const mRating = validRating(m.imdb_rating);
+  const mRank = useTop10Rank(m.id);
+  return (
+    <div
+      className="cursor-pointer overflow-hidden rounded-lg bg-[#2A2A2A] transition hover:bg-[#333]"
+      onClick={() => onOpenTitle(String(m.id))}
+    >
+      <div className="relative">
+        <img
+          src={m.banner || m.thumbnail || titlePosterDataUrl(mDisplay)}
+          alt={mDisplay}
+          loading="lazy"
+          className="aspect-video w-full object-cover"
+        />
+        {mRank != null && <Top10Ribbon />}
+        <div
+          className={`absolute top-2 ${mRank != null ? "right-12" : "right-2"}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <MyListButton movie={m} />
+        </div>
+      </div>
+      <div className="p-3">
+        <div className="flex items-center gap-2 text-xs">
+          {m.year != null && <span className="text-[#E5E5E5]">{m.year}</span>}
+          {mRating != null && (
+            <span className="font-bold text-amber-400">★ {mRating.toFixed(1)}</span>
+          )}
+          {m.quality && (
+            <span className="rounded border border-white/40 px-1 py-px text-[10px] font-semibold text-[#E5E5E5]">
+              {m.quality}
+            </span>
+          )}
+        </div>
+        <div className="mt-1.5 line-clamp-1 text-sm font-semibold text-white">{mDisplay}</div>
+        {m.description && (
+          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-[#B3B3B3]">
+            {m.description}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
 
 /**
  * Netflix-style title detail modal for Stream Mode. Opens over the browse
@@ -55,7 +118,29 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
       try {
         const res: any = await fetchMovieById({ data: { id: movieId } });
         if (cancelled) return;
-        const m = (res?.movie as Movie) || null;
+        let m = (res?.movie as Movie) || null;
+        // F3: if this row is a weak duplicate (e.g. a "Links coming
+        // soon" shell) and a same-title row carries more playable
+        // links, present the playable variant instead.
+        if (m) {
+          try {
+            const cleaned = cleanTitle(m.title) || m.title;
+            const vr: any = await fetchMoviesPaginated({
+              data: { page: 1, limit: 10, search: cleaned, sort: "latest" },
+            });
+            const variants = ((vr?.movies || []) as Movie[]).filter(
+              (x) => titleKey(x.title) === titleKey(m!.title),
+            );
+            const best = bestVariant(variants);
+            if (best && String(best.id) !== String(m.id) && playableLinkCount(best) > playableLinkCount(m)) {
+              const br: any = await fetchMovieById({ data: { id: String(best.id) } });
+              if (br?.movie) m = br.movie as Movie;
+            }
+          } catch {
+            /* variant swap is best-effort — the opened row still shows */
+          }
+          if (cancelled) return;
+        }
         setMovie(m);
         if (m) {
           let rel: Movie[] = [];
@@ -115,6 +200,8 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
       window.removeEventListener("keydown", onKey);
     };
   }, [movieId, onClose]);
+
+  const rank = useTop10Rank(movie?.id ?? movieId);
 
   if (!movieId) return null;
 
@@ -183,7 +270,7 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
                 <button
                   type="button"
                   onClick={onClose}
-                  className="mt-5 rounded bg-white px-5 py-2 text-sm font-bold text-black transition hover:bg-white/80"
+                  className="mt-5 rounded-full bg-white px-6 py-2 text-sm font-bold text-black transition hover:bg-white/80"
                 >
                   Close
                 </button>
@@ -204,30 +291,39 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
                   <h2 className="line-clamp-2 text-3xl font-black leading-tight text-white drop-shadow-lg md:text-5xl">
                     {display}
                   </h2>
-                  <div className="mt-4 flex flex-wrap items-center gap-2.5">
+                  <GlanceChips movie={movie} rank={rank} className="mt-3" />
+                  <div className="mt-4 flex flex-wrap items-start gap-2.5">
                     {playUrl && (
                       <button
                         type="button"
                         onClick={() => window.location.assign(playUrl)}
-                        className="flex items-center gap-2 rounded bg-white px-5 py-2 text-base font-bold text-black transition hover:bg-white/80"
+                        className="flex items-center gap-2 rounded-full bg-white px-6 py-2 text-base font-bold text-black transition hover:bg-white/80"
                       >
                         <Play size={20} fill="currentColor" /> {cw ? "Resume" : "Play"}
                         {cw && cw.ep != null ? ` · Ep ${cw.ep}` : ""}
                       </button>
                     )}
-                    <MyListButton movie={movie} />
+                    {/* Mobile detail anatomy (implication #8): labelled
+                        action row under Play, as in the mobile app. */}
+                    <span className="flex flex-col items-center gap-1">
+                      <MyListButton movie={movie} />
+                      <span className="text-[10px] font-medium text-white/75 md:hidden">My List</span>
+                    </span>
                     {qualities.length > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setDlOpen((o) => !o)}
-                        aria-expanded={dlOpen}
-                        title="Download options"
-                        className={`flex h-10 w-10 items-center justify-center rounded-full border-2 bg-[#141414]/80 text-white backdrop-blur transition ${
-                          dlOpen ? "border-[#06B6D4] text-[#06B6D4]" : "border-white/50 hover:border-white"
-                        }`}
-                      >
-                        <Download size={17} />
-                      </button>
+                      <span className="flex flex-col items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setDlOpen((o) => !o)}
+                          aria-expanded={dlOpen}
+                          title="Download options"
+                          className={`flex h-10 w-10 items-center justify-center rounded-full border-2 bg-[#141414]/80 text-white backdrop-blur transition ${
+                            dlOpen ? "border-[#06B6D4] text-[#06B6D4]" : "border-white/50 hover:border-white"
+                          }`}
+                        >
+                          <Download size={17} />
+                        </button>
+                        <span className="text-[10px] font-medium text-white/75 md:hidden">Download</span>
+                      </span>
                     )}
                   </div>
                   {dlOpen && qualities.length > 0 && (
@@ -245,7 +341,7 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
                               }),
                             )
                           }
-                          className="rounded border border-white/30 bg-black/60 px-3 py-1.5 text-[13px] font-semibold text-white backdrop-blur transition hover:border-[#06B6D4] hover:text-[#06B6D4]"
+                          className="rounded-full border border-white/30 bg-black/60 px-3.5 py-1.5 text-[13px] font-semibold text-white backdrop-blur transition hover:border-[#06B6D4] hover:text-[#06B6D4]"
                         >
                           {q.label} Download
                         </button>
@@ -266,13 +362,22 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
 
             <div className="grid gap-8 px-6 py-6 md:grid-cols-[2fr_1fr] md:px-10">
               <div>
+                {/* Standardised metadata line (implication #9):
+                    Genre · Year · Runtime/Seasons · Rating · Quality */}
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+                  {metaGenres(movie).length > 0 && (
+                    <span className="font-medium text-[#E5E5E5]">
+                      {metaGenres(movie).slice(0, 3).join(" · ")}
+                    </span>
+                  )}
+                  {movie.year != null && <span className="text-[#E5E5E5]">{movie.year}</span>}
+                  {runtimeLabel(movie) && (
+                    <span className="text-[#B3B3B3]">{runtimeLabel(movie)}</span>
+                  )}
                   {rating != null && (
                     <span className="font-bold text-amber-400">★ {rating.toFixed(1)}</span>
                   )}
-                  {movie.year != null && <span className="text-[#E5E5E5]">{movie.year}</span>}
                   {movie.quality && <QualityBadge quality={movie.quality} size="sm" />}
-                  {movie.duration && <span className="text-[#B3B3B3]">{movie.duration}</span>}
                   <span className="text-[#B3B3B3]">
                     {movie.type === "series" ? "Web Series" : "Movie"}
                   </span>
@@ -325,10 +430,17 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
 
             {episodes.length > 0 && (
               <div className="px-6 pb-2 md:px-10">
+                {/* Drill-in season header (implication #6). Our catalog
+                    stores one season per entry (season_number), so there
+                    is no season list to drill back to — the header takes
+                    the "Season N" form and the current episode is the
+                    expanded one, the rest collapsed rows, as in V1. */}
                 <div className="flex items-baseline justify-between border-t border-white/10 pt-5">
-                  <h3 className="text-xl font-semibold text-white">Episodes</h3>
+                  <h3 className="flex items-center gap-2 text-xl font-semibold text-white">
+                    <ArrowLeft size={19} className="text-[#B3B3B3]" />
+                    {movie.season_number ? `Season ${movie.season_number}` : "Episodes"}
+                  </h3>
                   <span className="text-sm text-[#B3B3B3]">
-                    {movie.season_number ? `Season ${movie.season_number} · ` : ""}
                     {episodes.length} Episode{episodes.length === 1 ? "" : "s"}
                   </span>
                 </div>
@@ -342,6 +454,7 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
                       epCw && epCw.duration > 0
                         ? Math.min(100, (epCw.position / epCw.duration) * 100)
                         : 0;
+                    const isCurrent = pct > 0 || (cw?.ep != null && cw.ep === num);
                     return (
                       <div
                         key={num}
@@ -357,17 +470,26 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
                             );
                           }
                         }}
-                        className={`flex items-center gap-4 border-t border-white/10 px-2 py-3.5 ${
-                          link ? "cursor-pointer transition hover:bg-white/5" : "opacity-50"
-                       }`}
+                        className={`flex items-center gap-4 border-t border-white/10 px-2 ${
+                          isCurrent ? "bg-white/5 py-4" : "py-3.5"
+                        } ${link ? "cursor-pointer transition hover:bg-white/5" : "opacity-50"}`}
                       >
                         <span className="w-8 flex-none text-center text-xl text-[#E5E5E5]">
                           {num}
                         </span>
                         <div className="min-w-0 flex-1">
-                          <div className="truncate text-sm font-semibold text-white">
+                          <div
+                            className={`text-sm font-semibold text-white ${
+                              isCurrent ? "line-clamp-2" : "truncate"
+                            }`}
+                          >
                             {extraTitle || `Episode ${num}`}
                           </div>
+                          {isCurrent && (
+                            <div className="mt-1 text-[11px] font-bold uppercase tracking-wider text-[#06B6D4]">
+                              Continue Watching{pct > 0 ? ` · ${Math.round(pct)}% watched` : ""}
+                            </div>
+                          )}
                           {pct > 0 && (
                             <div className="mt-1.5 h-[3px] w-44 max-w-full rounded bg-[#404040]">
                               <div
@@ -391,55 +513,9 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
               <div className="px-6 pt-4 md:px-10">
                 <h3 className="text-xl font-semibold text-white">More Like This</h3>
                 <div className="mt-4 grid gap-3 pb-2 sm:grid-cols-2 lg:grid-cols-3">
-                  {related.map((m) => {
-                    const mDisplay = cleanTitle(m.title) || m.title;
-                    const mRating = validRating(m.imdb_rating);
-                    return (
-                      <div
-                        key={m.id}
-                        className="cursor-pointer overflow-hidden rounded-lg bg-[#2A2A2A] transition hover:bg-[#333]"
-                        onClick={() => onOpenTitle(String(m.id))}
-                      >
-                        <div className="relative">
-                          <img
-                            src={m.banner || m.thumbnail || titlePosterDataUrl(mDisplay)}
-                            alt={mDisplay}
-                            loading="lazy"
-                            className="aspect-video w-full object-cover"
-                          />
-                          <div
-                            className="absolute right-2 top-2"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <MyListButton movie={m} />
-                          </div>
-                        </div>
-                        <div className="p-3">
-                          <div className="flex items-center gap-2 text-xs">
-                            {mRating != null && (
-                              <span className="font-bold text-amber-400">
-                                ★ {mRating.toFixed(1)}
-                              </span>
-                            )}
-                            {m.year != null && <span className="text-[#E5E5E5]">{m.year}</span>}
-                            {m.quality && (
-                              <span className="rounded border border-white/40 px-1 py-px text-[10px] font-semibold text-[#E5E5E5]">
-                                {m.quality}
-                              </span>
-                            )}
-                          </div>
-                          <div className="mt-1.5 line-clamp-1 text-sm font-semibold text-white">
-                            {mDisplay}
-                          </div>
-                          {m.description && (
-                            <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-[#B3B3B3]">
-                              {m.description}
-                            </p>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
+                  {related.map((m) => (
+                    <RelatedCard key={m.id} movie={m} onOpenTitle={onOpenTitle} />
+                  ))}
                 </div>
               </div>
             )}

@@ -25,8 +25,12 @@ export const Route = createFileRoute("/my-list")({
 });
 
 function MyListPage() {
-  const [items, setItems] = useState<MyListItem[]>([]);
+  // F5: null = the on-device list has not been read yet. The empty
+  // message may only render once resolution completes with zero items
+  // — never as a first-paint flash while saved titles are loading.
+  const [items, setItems] = useState<MyListItem[] | null>(null);
   const [movies, setMovies] = useState<Movie[]>([]);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
     const load = () => setItems(loadMyList());
@@ -36,10 +40,13 @@ function MyListPage() {
 
   // Hydrate snapshots into full rows so cards can play / show full meta.
   useEffect(() => {
+    if (!items) return;
     if (!items.length) {
       setMovies([]);
+      setHydrated(true);
       return;
     }
+    setHydrated(false);
     let cancelled = false;
     const snapshots = items.map(
       (i) =>
@@ -58,9 +65,13 @@ function MyListPage() {
           ((r?.movies || []) as Movie[]).map((m) => [String(m.id), m]),
         );
         setMovies(items.map((i) => byId.get(i.id) || snapshots[items.indexOf(i)]));
+        setHydrated(true);
       })
       .catch(() => {
-        if (!cancelled) setMovies(snapshots);
+        if (!cancelled) {
+          setMovies(snapshots);
+          setHydrated(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -77,7 +88,15 @@ function MyListPage() {
           Titles you save appear here — stored on this device, no account needed.
         </p>
 
-        {items.length === 0 ? (
+        {items === null || !hydrated ? (
+          /* F5: loading state until the list resolves — skeleton cards,
+             never the empty message. */
+          <div className="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6" aria-label="Loading your list">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="aspect-[2/3] animate-pulse rounded-lg bg-white/6" />
+            ))}
+          </div>
+        ) : items.length === 0 ? (
           <div className="mt-16 text-center">
             <Bookmark size={40} className="mx-auto text-slate-600" />
             <p className="mt-4 text-lg font-semibold text-white">Your list is empty</p>

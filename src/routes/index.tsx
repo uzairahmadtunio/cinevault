@@ -12,6 +12,8 @@ import { continueWatchingUrl, loadContinueWatching, removeContinueWatching, type
 import { ChevronLeft, ChevronRight, Search as SearchIcon, AlertCircle, SlidersHorizontal, X, Sparkles, Zap, Clapperboard, Globe, Film, Shield, Bookmark, TrendingUp, Play } from "lucide-react";
 import { StreamExperience } from "@/components/stream/StreamHome";
 import { TitleDetailModal } from "@/components/stream/TitleDetailModal";
+import { Top10Provider } from "@/components/stream/Top10Context";
+import { consumePendingOpenTitle, registerOpenTitleHandler } from "@/lib/openTitleBus";
 import { CURRENT_MIRROR_INDEX, BASE_DOMAIN, getActiveCatalogUrl, getCrossDomainCatalogUrl, isMirrorHostname } from "@/lib/utils/domainConfig";
 
 export const Route = createFileRoute("/")({
@@ -484,6 +486,19 @@ function Home() {
     setCwEntries(loadContinueWatching());
   };
 
+  // F2: the Search Overlay (in SiteShell) asks this page to open the
+  // Stream Mode detail modal when a result is clicked. Register the
+  // handler only while the Stream UI is the thing actually rendered,
+  // and consume any pending id left by an overlay click elsewhere.
+  const streamUiActive = mode === "stream" && showCatalog;
+  useEffect(() => {
+    if (!streamUiActive) return;
+    const unregister = registerOpenTitleHandler((id) => setModalId(id));
+    const pendingId = consumePendingOpenTitle();
+    if (pendingId) setModalId(pendingId);
+    return unregister;
+  }, [streamUiActive]);
+
   useEffect(() => {
     setSearchInput(search || "");
   }, [search]);
@@ -726,35 +741,49 @@ function Home() {
               : "Browse";
     return (
       <SiteShell>
-        <StreamExperience
-          view={filtersActive ? "results" : "home"}
-          cwEntries={cwEntries}
-          onRemoveCw={removeCw}
-          onOpenTitle={(id) => setModalId(id)}
-          resultsParams={{
-            filter: getFilterValue(),
-            search: search || "",
-            genres: genres || "",
-            years: years || "",
-          }}
-          searchQuery={search || ""}
-          didYouMean={didYouMean}
-          onDidYouMean={() => {
-            if (didYouMean) handleSearch(didYouMean);
-          }}
-          fuzzy={fuzzyFallback}
-          searchInput={searchInput}
-          onSearchChange={handleSearch}
-          suggestions={suggestions}
-          onSuggestionPick={(id) => setModalId(id)}
-          resultsLabel={resultsLabel}
-          onResetAll={handleResetAll}
-        />
-        <TitleDetailModal
-          movieId={modalId}
-          onClose={() => setModalId(null)}
-          onOpenTitle={(id) => setModalId(id)}
-        />
+        <Top10Provider>
+          <StreamExperience
+            view={filtersActive ? "results" : "home"}
+            cwEntries={cwEntries}
+            onRemoveCw={removeCw}
+            onOpenTitle={(id) => setModalId(id)}
+            resultsParams={{
+              filter: getFilterValue(),
+              search: search || "",
+              genres: genres || "",
+              years: years || "",
+            }}
+            searchQuery={search || ""}
+            didYouMean={didYouMean}
+            onDidYouMean={() => {
+              if (didYouMean) handleSearch(didYouMean);
+            }}
+            fuzzy={fuzzyFallback}
+            searchInput={searchInput}
+            onSearchChange={handleSearch}
+            suggestions={suggestions}
+            onSuggestionPick={(id) => setModalId(id)}
+            resultsLabel={resultsLabel}
+            onResetAll={handleResetAll}
+            activeGenre={genres || ""}
+            onGenrePick={(g) => {
+              navigate({
+                to: "/",
+                search: (prev) => ({
+                  ...prev,
+                  view: "catalog",
+                  page: 1,
+                  genres: g || undefined,
+                }),
+              });
+            }}
+          />
+          <TitleDetailModal
+            movieId={modalId}
+            onClose={() => setModalId(null)}
+            onOpenTitle={(id) => setModalId(id)}
+          />
+        </Top10Provider>
       </SiteShell>
     );
   }

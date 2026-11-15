@@ -60,6 +60,8 @@ export type Movie = {
   file_size?: string | null;
   director?: string | null;
   cast_names?: string | null;
+  tmdb_id?: number | null;
+  imdb_id?: string | null;
 };
 
 export type EpisodeLink = {

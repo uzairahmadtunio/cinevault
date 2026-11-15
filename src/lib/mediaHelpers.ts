@@ -189,3 +189,122 @@ export function alternateStreamCandidates(
   for (const q of rankQualityLinks(validQualities(movie))) push(q.url);
   return out.slice(0, max);
 }
+
+/* ---------------- Duplicate rows / playable-variant ranking (F3) ----
+ * The catalog contains duplicate rows for the same title (e.g. a junk
+ * "Links coming soon" row next to a fully-linked one). Journeys should
+ * prefer the variant that can actually play. */
+
+export function titleKey(raw?: string | null): string {
+  if (!raw) return "";
+  return String(raw)
+    .toLowerCase()
+    .replace(/\((19|20)\d{2}\)/g, " ")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .replace(/\s+/g, " ");
+}
+
+/** How much of this row can actually play: valid top-level quality links
+ *  plus episodes that carry at least one valid link. Junk "coming soon"
+ *  episode shells score 0. */
+export function playableLinkCount(movie?: Partial<Movie> | null): number {
+  if (!movie) return 0;
+  let n = validQualities(movie).length;
+  for (const ep of parseEpisodes(movie)) {
+    if (episodeBestLink(ep)) n += 1;
+  }
+  return n;
+}
+
+/** The best same-title variant: most playable links wins; ties keep the
+ *  earliest row (stable). */
+export function bestVariant<T extends Partial<Movie>>(rows: T[]): T | null {
+  let best: T | null = null;
+  let bestScore = -1;
+  for (const r of rows) {
+    const s = playableLinkCount(r);
+    if (s > bestScore) {
+      best = r;
+      bestScore = s;
+    }
+  }
+  return best;
+}
+
+/** Collapse same-title duplicates in a list, keeping the most playable
+ *  variant at the position of its first occurrence. */
+export function dedupeByTitle<T extends Partial<Movie>>(rows: T[]): T[] {
+  const order: string[] = [];
+  const byKey = new Map<string, T>();
+  for (const r of rows) {
+    const key = titleKey(r.title) || String(r.id);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, r);
+      order.push(key);
+    } else if (playableLinkCount(r) > playableLinkCount(existing)) {
+      byKey.set(key, r);
+    }
+  }
+  return order.map((k) => byKey.get(k)!);
+}
+
+/* ---------------- Standardised metadata line ------------------------
+ * Netflix's confirmed order (delta report, implication #9):
+ * Genre · Year · Runtime/Seasons · Rating · Quality.              */
+
+export function metaGenres(movie?: Partial<Movie> | null): string[] {
+  if (!movie?.genre) return [];
+  return movie.genre
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+/** The runtime slot of the metadata line: a movie's duration, or for a
+ *  series its episode count / season label when no duration is stored. */
+export function runtimeLabel(movie?: Partial<Movie> | null): string | null {
+  if (!movie) return null;
+  if (movie.type === "series") {
+    if (movie.total_episodes && movie.total_episodes > 0) {
+      return `${movie.total_episodes} Episode${movie.total_episodes === 1 ? "" : "s"}`;
+    }
+    if (movie.season_number) return `Season ${movie.season_number}`;
+  }
+  return movie.duration || null;
+}
+
+/* ---------------- "At a Glance" chips -------------------------------
+ * Netflix's icon-chip cluster (delta report NEW #1 / implication #3),
+ * restricted to facts our own data can back: recency from created_at,
+ * a new-season entry, and today's Top 10 rank. No awards, no leaving
+ * dates — we have no data for those, so those chips never appear. */
+
+export type GlanceChip = { key: string; label: string };
+
+export function isRecentlyAdded(movie?: Partial<Movie> | null, days = 14): boolean {
+  const raw = movie?.created_at;
+  if (!raw) return false;
+  const t = Date.parse(raw);
+  if (!Number.isFinite(t)) return false;
+  return Date.now() - t <= days * 24 * 3600 * 1000 && t <= Date.now() + 3600 * 1000;
+}
+
+export function glanceChips(
+  movie?: Partial<Movie> | null,
+  top10Rank?: number | null,
+): GlanceChip[] {
+  if (!movie) return [];
+  const chips: GlanceChip[] = [];
+  if (top10Rank != null && top10Rank >= 1 && top10Rank <= 10) {
+    chips.push({ key: "top10", label: `#${top10Rank} in Top 10 Today` });
+  }
+  if (movie.type === "series" && (movie.season_number ?? 0) >= 2 && isRecentlyAdded(movie, 45)) {
+    chips.push({ key: "new-season", label: "New Season" });
+  }
+  if (isRecentlyAdded(movie, 14)) {
+    chips.push({ key: "recent", label: "Recently Added" });
+  }
+  return chips;
+}

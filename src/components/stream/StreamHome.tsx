@@ -18,6 +18,7 @@ import {
   MoreVertical,
   Play,
   Search as SearchIcon,
+  ThumbsUp,
   X,
 } from "lucide-react";
 import { QualityBadge, titlePosterDataUrl } from "@/components/cinevault";
@@ -28,13 +29,23 @@ import {
   fetchMoviesPaginated,
   fetchTrendingOrTopRated,
 } from "@/lib/api/server.movies";
-import { pickCardStream, validRating } from "@/lib/mediaHelpers";
+import {
+  dedupeByTitle,
+  glanceChips,
+  linkHostTier,
+  metaGenres,
+  pickCardStream,
+  runtimeLabel,
+  validRating,
+} from "@/lib/mediaHelpers";
 import { buildStreamUrl } from "@/utils/linkBypasser";
 import type { CWEntry } from "@/lib/continueWatching";
 import type { FuzzyHit } from "@/lib/searchIndex";
 import { loadMyList } from "@/lib/myList";
+import { isLiked, subscribeLikes, toggleLike } from "@/lib/likes";
 import { MyListButton, useMyListVersion } from "./MyListButton";
 import { TrailerHero } from "./TrailerHero";
+import { Top10Ribbon, useTop10Rank } from "./Top10Context";
 
 /* ------------------------------------------------------------------ */
 /* Shared context: anything inside Stream Mode can open the detail    */
@@ -46,11 +57,39 @@ export const useOpenTitle = () => useContext(OpenTitleContext);
 type CardMovie = Partial<Movie> & { id: string | number; title: string };
 
 const displayTitle = (m: CardMovie) => cleanTitle(m.title) || m.title;
-const genreList = (m: CardMovie) =>
-  (m.genre || "")
-    .split(",")
-    .map((s) => s.trim())
-    .filter(Boolean);
+const genreList = (m: CardMovie) => metaGenres(m as Partial<Movie>);
+
+/* "At a Glance" chips live in their own module (shared with the modal
+ * and the watch page). */
+import { GlanceChips } from "./GlanceChips";
+export { GlanceChips };
+
+/* Hover-card thumbs (delta implication #4): the viewer's own local
+ * rating, stored on-device like My List. */
+function LikeButton({ id }: { id: string | number }) {
+  const [, setV] = useState(0);
+  useEffect(() => subscribeLikes(() => setV((x) => x + 1)), []);
+  const liked = isLiked(id);
+  return (
+    <button
+      type="button"
+      aria-label={liked ? "Rated: liked" : "Rate: like"}
+      aria-pressed={liked}
+      title={liked ? "You liked this" : "Like this"}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleLike(id);
+      }}
+      className={`flex h-9 w-9 items-center justify-center rounded-full border-2 backdrop-blur transition-colors ${
+        liked
+          ? "border-[#06B6D4] bg-[#06B6D4]/20 text-[#06B6D4]"
+          : "border-white/50 bg-[#141414]/80 text-white hover:border-white"
+      }`}
+    >
+      <ThumbsUp size={15} fill={liked ? "currentColor" : "none"} />
+    </button>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* StreamCard — 16:9 backdrop card (portrait for Top 10) with a       */
@@ -86,6 +125,9 @@ function StreamCard({
   const stream = pickCardStream(movie as Movie);
   const rating = validRating(movie.imdb_rating);
   const genres = genreList(movie);
+  const rank = useTop10Rank(movie.id);
+  const chips = glanceChips(movie as Partial<Movie>, rank);
+  const runtime = runtimeLabel(movie as Partial<Movie>);
 
   const openPlayer = () => {
     if (!stream) return;
@@ -140,7 +182,9 @@ function StreamCard({
     if (!rect || typeof document === "undefined") return null;
     const w = rect.width * 1.45;
     const artH = w * (variant === "poster" ? 1.5 : 9 / 16);
-    const panelH = 118;
+    // Panel grows with the focused-preview content (implication #1
+    // subset): synopsis line + At-a-Glance chips when present.
+    const panelH = 118 + (movie.description ? 36 : 0) + (chips.length ? 26 : 0);
     const left = Math.max(8, Math.min(window.innerWidth - w - 8, rect.left + rect.width / 2 - w / 2));
     const top = Math.max(
       8,
@@ -177,6 +221,7 @@ function StreamCard({
               </button>
             )}
             <MyListButton movie={movie as Movie} />
+            <LikeButton id={movie.id} />
             <div className="flex-1" />
             <button
               type="button"
@@ -187,20 +232,37 @@ function StreamCard({
               <ChevronDown size={17} />
             </button>
           </div>
+          {/* Standardised metadata line (implication #9): Genre · Year ·
+              Runtime/Seasons · Rating · Quality. No match % — Netflix
+              itself omits it on most cards (delta CORRECTS #5). */}
           <div className="mt-2.5 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-xs">
-            {rating != null && <span className="font-bold text-amber-400">★ {rating.toFixed(1)}</span>}
+            {genres.length > 0 && (
+              <span className="font-medium text-[#E5E5E5]">{genres.slice(0, 2).join(" · ")}</span>
+            )}
             {movie.year != null && <span className="text-[#E5E5E5]">{movie.year}</span>}
+            {runtime && <span className="text-[#B3B3B3]">{runtime}</span>}
+            {rating != null && <span className="font-bold text-amber-400">★ {rating.toFixed(1)}</span>}
             {movie.quality && (
               <span className="rounded border border-white/40 px-1 py-px text-[10px] font-semibold text-[#E5E5E5]">
                 {movie.quality}
               </span>
             )}
-            {movie.duration && <span className="text-[#B3B3B3]">{movie.duration}</span>}
-            {movie.type === "series" && <span className="text-[#B3B3B3]">Web Series</span>}
           </div>
-          {genres.length > 0 && (
-            <div className="mt-1.5 line-clamp-1 text-[11px] text-[#B3B3B3]">
-              {genres.slice(0, 3).join(" • ")}
+          {movie.description && (
+            <p className="mt-1.5 line-clamp-2 text-[11px] leading-snug text-[#B3B3B3]">
+              {movie.description}
+            </p>
+          )}
+          {chips.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {chips.map((c) => (
+                <span
+                  key={c.key}
+                  className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-semibold text-white ring-1 ring-white/10"
+                >
+                  {c.label}
+                </span>
+              ))}
             </div>
           )}
           {progress != null && (
@@ -243,6 +305,7 @@ function StreamCard({
             <QualityBadge quality={movie.quality} size="sm" />
           </div>
         )}
+        {rank != null && <Top10Ribbon />}
         {onRemoveFromRow && (
           <button
             type="button"
@@ -251,7 +314,9 @@ function StreamCard({
               e.stopPropagation();
               setMenuOpen((o) => !o);
             }}
-            className="absolute right-1.5 top-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur transition hover:bg-black/85"
+            className={`absolute right-1.5 z-10 flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur transition hover:bg-black/85 ${
+              rank != null ? "top-11" : "top-1.5"
+            }`}
           >
             <MoreVertical size={15} />
           </button>
@@ -286,7 +351,11 @@ function StreamCard({
         )}
       </div>
       {menuOpen && onRemoveFromRow && (
-        <div className="absolute right-0 top-9 z-30 w-44 overflow-hidden rounded-md border border-white/15 bg-[#181818] py-1 shadow-2xl">
+        <div
+          className={`absolute right-0 z-30 w-44 overflow-hidden rounded-md border border-white/15 bg-[#181818] py-1 shadow-2xl ${
+            rank != null ? "top-[4.7rem]" : "top-9"
+          }`}
+        >
           <button
             type="button"
             className="block w-full px-3 py-2 text-left text-[13px] text-[#E5E5E5] hover:bg-white/10"
@@ -365,6 +434,8 @@ function Billboard({ movie }: { movie: Movie }) {
   const stream = pickCardStream(movie);
   const rating = validRating(movie.imdb_rating);
   const genres = genreList(movie);
+  const rank = useTop10Rank(movie.id);
+  const runtime = runtimeLabel(movie);
   const play = () => {
     if (!stream) return;
     window.location.assign(
@@ -391,16 +462,21 @@ function Billboard({ movie }: { movie: Movie }) {
         <h1 className="mt-3 line-clamp-2 text-4xl font-black leading-[1.02] text-white drop-shadow-lg md:text-6xl">
           {display}
         </h1>
-        <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
-          {rating != null && <span className="font-bold text-amber-400">★ {rating.toFixed(1)}</span>}
+        <GlanceChips movie={movie} rank={rank} className="mt-3.5" />
+        {/* Standardised metadata line (implication #9):
+            Genre · Year · Runtime/Seasons · Rating · Quality */}
+        <div className="mt-3.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+          {genres.length > 0 && (
+            <span className="font-medium text-white/90">{genres.join(" · ")}</span>
+          )}
           {movie.year != null && <span className="text-white/90">{movie.year}</span>}
+          {runtime && <span className="text-white/80">{runtime}</span>}
+          {rating != null && <span className="font-bold text-amber-400">★ {rating.toFixed(1)}</span>}
           {movie.quality && (
             <span className="rounded border border-white/40 px-1.5 py-px text-[11px] font-semibold text-white/90">
               {movie.quality}
             </span>
           )}
-          {movie.duration && <span className="text-white/80">{movie.duration}</span>}
-          {genres.length > 0 && <span className="text-white/75">{genres.join(" · ")}</span>}
         </div>
         {movie.description && (
           <p className="mt-3 hidden max-w-[540px] text-sm leading-relaxed text-white/90 drop-shadow line-clamp-3 sm:block md:text-[15px]">
@@ -412,7 +488,7 @@ function Billboard({ movie }: { movie: Movie }) {
             <button
               type="button"
               onClick={play}
-              className="flex items-center gap-2 rounded bg-white px-5 py-2.5 text-base font-bold text-black transition hover:bg-white/80 md:px-7 md:text-lg"
+              className="flex items-center gap-2 rounded-full bg-white px-6 py-2.5 text-base font-bold text-black transition hover:bg-white/80 md:px-8 md:text-lg"
             >
               <Play size={22} fill="currentColor" /> Play
             </button>
@@ -420,7 +496,7 @@ function Billboard({ movie }: { movie: Movie }) {
           <button
             type="button"
             onClick={() => openTitle(String(movie.id))}
-            className="flex items-center gap-2 rounded bg-[rgba(109,109,110,0.7)] px-5 py-2.5 text-base font-bold text-white backdrop-blur transition hover:bg-[rgba(109,109,110,0.45)] md:px-6 md:text-lg"
+            className="flex items-center gap-2 rounded-full bg-[rgba(109,109,110,0.7)] px-6 py-2.5 text-base font-bold text-white backdrop-blur transition hover:bg-[rgba(109,109,110,0.45)] md:px-7 md:text-lg"
           >
             <Info size={22} /> More Info
           </button>
@@ -454,20 +530,30 @@ function StreamHome({
 
   useEffect(() => {
     let cancelled = false;
+    // F6: each shelf resolves independently — the billboard paints as
+    // soon as featured OR trending lands instead of waiting for all
+    // three requests (and the genre rows) to finish.
+    let settledCount = 0;
+    const settle = <T,>(p: Promise<T>, apply: (v: T) => void) =>
+      p
+        .then((v) => {
+          if (!cancelled) apply(v);
+        })
+        .catch(() => {})
+        .finally(() => {
+          settledCount += 1;
+          if (!cancelled && settledCount >= 3) setHomeLoading(false);
+        });
+    settle(fetchFeaturedOrLatest({ data: { limit: 8 } }), (f: any) =>
+      setFeatured(((f as any)?.movies || []) as Movie[]),
+    );
+    settle(fetchTrendingOrTopRated({ data: { limit: 16 } }), (t: any) =>
+      setTrending(((t as any)?.movies || []) as Movie[]),
+    );
+    settle(fetchMoviesPaginated({ data: { page: 1, limit: 14, sort: "latest" } }), (l: any) =>
+      setLatest(((l as any)?.movies || []) as Movie[]),
+    );
     (async () => {
-      try {
-        const [f, t, l] = await Promise.all([
-          fetchFeaturedOrLatest({ data: { limit: 8 } }).catch(() => null),
-          fetchTrendingOrTopRated({ data: { limit: 16 } }).catch(() => null),
-          fetchMoviesPaginated({ data: { page: 1, limit: 14, sort: "latest" } }).catch(() => null),
-        ]);
-        if (cancelled) return;
-        setFeatured(((f as any)?.movies || []) as Movie[]);
-        setTrending(((t as any)?.movies || []) as Movie[]);
-        setLatest(((l as any)?.movies || []) as Movie[]);
-      } finally {
-        if (!cancelled) setHomeLoading(false);
-      }
       const rows = await Promise.all(
         GENRE_ORDER.map(async (g) => {
           try {
@@ -574,9 +660,23 @@ function StreamHome({
   }, [cwMovies, cwEntries]);
 
   const billboard = useMemo(() => {
-    const pick = (arr: Movie[]) =>
-      arr.find((m) => (m.banner || m.thumbnail) && pickCardStream(m));
-    return pick(featured) || pick(trending) || featured[0] || trending[0] || null;
+    // F1 audit: prefer a featured title whose best source is on a
+    // playable host (mdrive tier) over one that leads with a blocked
+    // hubcloud link; featured order breaks ties.
+    const candidates = [...featured, ...trending].filter(
+      (m) => (m.banner || m.thumbnail) && pickCardStream(m),
+    );
+    let best: Movie | null = null;
+    let bestTier = -1;
+    for (const m of candidates) {
+      const s = pickCardStream(m);
+      const tier = s ? linkHostTier(s.url) : 0;
+      if (tier > bestTier) {
+        best = m;
+        bestTier = tier;
+      }
+    }
+    return best || featured[0] || trending[0] || null;
   }, [featured, trending]);
 
   const cwCard = (e: CWEntry): CardMovie =>
@@ -593,10 +693,45 @@ function StreamHome({
       {billboard ? (
         <Billboard movie={billboard} />
       ) : (
-        <div className="h-[62vh] min-h-[430px] animate-pulse bg-[#181818] md:h-[56.25vw] md:max-h-[92vh]" />
+        /* F6: branded skeleton from first paint — never a black void
+           while the featured shelf is in flight. */
+        <div className="relative h-[62vh] min-h-[430px] overflow-hidden bg-gradient-to-b from-[#1b1b1b] to-[#141414] md:h-[56.25vw] md:max-h-[92vh] md:min-h-[540px]">
+          <div className="absolute bottom-[13%] left-4 max-w-[620px] md:left-12">
+            <div className="flex items-center gap-1.5 text-[11px] font-black uppercase tracking-[0.22em] text-[#06B6D4] md:text-xs">
+              <Clapperboard size={15} /> CineVault Featured
+            </div>
+            <div className="mt-4 h-10 w-72 max-w-[70vw] animate-pulse rounded bg-white/10 md:h-14" />
+            <div className="mt-4 h-4 w-52 animate-pulse rounded bg-white/8" />
+            <div className="mt-3 hidden h-4 w-96 max-w-[60vw] animate-pulse rounded bg-white/6 sm:block" />
+            <div className="mt-6 flex gap-3">
+              <div className="h-11 w-32 animate-pulse rounded-full bg-white/15" />
+              <div className="h-11 w-36 animate-pulse rounded-full bg-white/8" />
+            </div>
+          </div>
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-44 bg-gradient-to-t from-[#141414] to-transparent" />
+        </div>
       )}
 
       <div className="relative z-10 -mt-14 pb-16 md:-mt-24">
+        {/* Row order follows the video evidence (implication #5 /
+            delta CORRECTS #3 + #6): Continue Watching has no sacred
+            first slot — My List may precede it, as on V1's home. */}
+        {listMovies.length > 0 && (
+          <StreamRow title="My List">
+            {listMovies.map((m) => (
+              <StreamCard key={`ml-${m.id}`} movie={m} />
+            ))}
+          </StreamRow>
+        )}
+
+        {trending.length > 0 && (
+          <StreamRow title="Trending Now">
+            {trending.map((m) => (
+              <StreamCard key={`tr-${m.id}`} movie={m} />
+            ))}
+          </StreamRow>
+        )}
+
         {cwEntries.length > 0 && (
           <StreamRow title="Continue Watching">
             {cwEntries.map((e) => (
@@ -606,14 +741,6 @@ function StreamHome({
                 progress={cwProgress(e)}
                 onRemoveFromRow={() => onRemoveCw(e)}
               />
-            ))}
-          </StreamRow>
-        )}
-
-        {trending.length > 0 && (
-          <StreamRow title="Trending Now">
-            {trending.map((m) => (
-              <StreamCard key={`tr-${m.id}`} movie={m} />
             ))}
           </StreamRow>
         )}
@@ -646,14 +773,6 @@ function StreamHome({
           <StreamRow title="New on CineVault">
             {latest.map((m) => (
               <StreamCard key={`new-${m.id}`} movie={m} />
-            ))}
-          </StreamRow>
-        )}
-
-        {listMovies.length > 0 && (
-          <StreamRow title="My List">
-            {listMovies.map((m) => (
-              <StreamCard key={`ml-${m.id}`} movie={m} />
             ))}
           </StreamRow>
         )}
@@ -699,6 +818,12 @@ function StreamHome({
 /* ------------------------------------------------------------------ */
 /* StreamResults — Netflix-style results grid for search / filters.   */
 /* ------------------------------------------------------------------ */
+const SEARCH_GENRES = [
+  "Action", "Adventure", "Comedy", "Drama", "Thriller",
+  "Sci-Fi", "Horror", "Romance", "Fantasy", "Animation",
+  "Crime", "Mystery",
+];
+
 function StreamResults({
   resultsParams,
   searchQuery,
@@ -711,6 +836,8 @@ function StreamResults({
   onSuggestionPick,
   resultsLabel,
   onResetAll,
+  onGenrePick,
+  activeGenre,
 }: StreamResultsProps) {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [total, setTotal] = useState(0);
@@ -734,8 +861,12 @@ function StreamResults({
     })
       .then((r: any) => {
         if (cancelled) return;
-        setMovies((r?.movies || []) as Movie[]);
-        setTotal(r?.total || 0);
+        // F3: collapse same-title duplicates to the most playable
+        // variant so a junk "coming soon" row never fronts a search.
+        const raw = (r?.movies || []) as Movie[];
+        const deduped = dedupeByTitle(raw);
+        setMovies(deduped);
+        setTotal(resultsParams?.search ? deduped.length : r?.total || 0);
       })
       .catch(() => {
         if (!cancelled) {
@@ -839,6 +970,42 @@ function StreamResults({
         </button>
       )}
 
+      {/* Browsable category pills on the search surface (implication
+          #7 — the new Netflix TV search tab keeps categories inside
+          Search). Pill geometry, filled-white selected state (#2). */}
+      {onGenrePick && (
+        <div className="no-scrollbar -mx-4 mt-6 flex gap-2 overflow-x-auto px-4 pb-1 md:-mx-12 md:px-12">
+          <button
+            type="button"
+            onClick={() => onGenrePick(null)}
+            className={`flex-none rounded-full px-4 py-1.5 text-[13px] font-semibold transition ${
+              !activeGenre
+                ? "bg-white text-black"
+                : "border border-white/30 text-white/85 hover:border-white"
+            }`}
+          >
+            All
+          </button>
+          {SEARCH_GENRES.map((g) => {
+            const selected = (activeGenre || "") === g;
+            return (
+              <button
+                key={g}
+                type="button"
+                onClick={() => onGenrePick(selected ? null : g)}
+                className={`flex-none rounded-full px-4 py-1.5 text-[13px] font-semibold transition ${
+                  selected
+                    ? "bg-white text-black"
+                    : "border border-white/30 text-white/85 hover:border-white"
+                }`}
+              >
+                {g}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {loading ? (
         <div className="mt-8 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
           {Array.from({ length: 10 }).map((_, i) => (
@@ -880,7 +1047,7 @@ function StreamResults({
           <button
             type="button"
             onClick={onResetAll}
-            className="mt-5 rounded bg-white px-5 py-2 text-sm font-bold text-black transition hover:bg-white/80"
+            className="mt-5 rounded-full bg-white px-6 py-2 text-sm font-bold text-black transition hover:bg-white/80"
           >
             Reset search
           </button>
@@ -905,6 +1072,8 @@ export type StreamResultsProps = {
   onSuggestionPick: (id: string) => void;
   resultsLabel: string;
   onResetAll: () => void;
+  onGenrePick?: (genre: string | null) => void;
+  activeGenre?: string;
 };
 
 export type StreamExperienceProps = StreamResultsProps & {

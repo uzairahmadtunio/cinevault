@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useRef } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Search, Send, Menu, X, ChevronDown, ChevronLeft, ChevronRight,
-  Download, Info, Home, Flame, Film, MoreHorizontal, Play, Star,
+  Download, Info, Home, Flame, Film, MoreHorizontal, Play, Star, Tv, Bookmark,
 } from "lucide-react";
 import { publicClient, qualityColor, FALLBACK_MOVIES, FEATURED_FALLBACK, cleanTitle, type Movie, type EpisodeLink } from "@/lib/supabase";
 import { fetchFeaturedOrLatest } from "@/lib/api/server.movies";
@@ -10,6 +10,7 @@ import { STREAM_MODE_FREE, useSiteMode } from "@/lib/siteMode";
 import { pickCardStream, validRating } from "@/lib/mediaHelpers";
 import { buildStreamUrl } from "@/utils/linkBypasser";
 import { fuzzyFind, getSearchIndex, type SearchIndexItem } from "@/lib/searchIndex";
+import { requestOpenTitle } from "@/lib/openTitleBus";
 
 /* ---------------- Toast ---------------- */
 type ToastMsg = { id: number; text: string };
@@ -219,13 +220,16 @@ export function Navbar({ onOpenSearch }: { onOpenSearch: () => void }) {
         </Link>
         <nav className="hidden md:flex items-center gap-1 ml-8 text-sm">
           {mode === "stream" ? (
-            <>
-              <NavLink to="/">Home</NavLink>
-              <NavLink to="/movies">Movies</NavLink>
-              <NavLink to="/series">Web Series</NavLink>
-              <NavLink to="/movies/anime">Anime</NavLink>
-              <NavLink to="/my-list">My List</NavLink>
-            </>
+            /* 2025-style pill tab bar (delta implication #2): rounded
+               tabs, filled-white selected state. Stream branch only —
+               Download Mode's nav is untouched. */
+            <div className="flex items-center gap-1 rounded-full bg-white/5 p-1 ring-1 ring-white/10">
+              <StreamNavLink to="/" exact>Home</StreamNavLink>
+              <StreamNavLink to="/movies">Movies</StreamNavLink>
+              <StreamNavLink to="/series">Web Series</StreamNavLink>
+              <StreamNavLink to="/movies/anime">Anime</StreamNavLink>
+              <StreamNavLink to="/my-list">My List</StreamNavLink>
+            </div>
           ) : (
             <>
               <NavDrop label="OTT" items={NAV_OTT} />
@@ -299,6 +303,20 @@ export function Navbar({ onOpenSearch }: { onOpenSearch: () => void }) {
 function NavLink({ children, to = "/", search }: { children: React.ReactNode; to?: string; search?: any }) {
   return (
     <Link to={to} search={search} className="px-3 py-2 text-[#F1F5F9] hover:text-[#06B6D4] cursor-pointer" activeProps={{ className: "text-[#06B6D4]" }}>
+      {children}
+    </Link>
+  );
+}
+
+/* Stream Mode pill tab (delta implication #2). */
+function StreamNavLink({ children, to, exact = false }: { children: React.ReactNode; to: string; exact?: boolean }) {
+  return (
+    <Link
+      to={to}
+      activeOptions={{ exact }}
+      className="rounded-full px-3.5 py-1.5 text-[#F1F5F9]/85 transition hover:bg-white/10 hover:text-white cursor-pointer"
+      activeProps={{ className: "bg-white font-bold text-black hover:bg-white hover:text-black" }}
+    >
       {children}
     </Link>
   );
@@ -443,6 +461,23 @@ function DrawerGroup({ title, items, category = "" }: { title: string; items: st
 
 /* ---------------- Mobile Bottom Nav ---------------- */
 export function MobileBottomNav({ onOpenSearch }: { onOpenSearch: () => void }) {
+  const { mode } = useSiteMode();
+  if (mode === "stream") {
+    /* Stream Mode bottom tabs (delta implication #8, adapted from the
+       mobile app's Home · New & Hot · Search · My Netflix pattern):
+       Home / Movies / Web Series / Search / My List hub. */
+    return (
+      <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#141414]/97 border-t border-white/10 flex justify-around py-2 backdrop-blur">
+        <BItem icon={<Home size={18} />} label="Home" to="/" />
+        <BItem icon={<Film size={18} />} label="Movies" to="/movies" />
+        <BItem icon={<Tv size={18} />} label="Web Series" to="/series" />
+        <button onClick={onOpenSearch} className="flex flex-col items-center text-[#F1F5F9] hover:text-[#06B6D4] text-[10px]">
+          <Search size={18} /><span>Search</span>
+        </button>
+        <BItem icon={<Bookmark size={18} />} label="My List" to="/my-list" />
+      </nav>
+    );
+  }
   return (
     <nav className="md:hidden fixed bottom-0 inset-x-0 z-30 bg-[#0D1321] border-t border-[rgba(14,165,233,0.4)] flex justify-around py-2">
       <BItem icon={<Home size={18} />} label="Home" to="/" />
@@ -505,11 +540,31 @@ export function NoticePopup() {
 }
 
 /* ---------------- Search Overlay ---------------- */
+const SEARCH_GENRES = [
+  "Action", "Adventure", "Comedy", "Drama", "Thriller",
+  "Sci-Fi", "Horror", "Romance", "Fantasy", "Animation",
+  "Crime", "Mystery",
+];
+const SEARCH_CATEGORIES: { label: string; search: Record<string, string> }[] = [
+  { label: "4K Ultra HD", search: { category: "4k" } },
+  { label: "FHD", search: { category: "fhd" } },
+  { label: "Netflix", search: { platform: "netflix" } },
+  { label: "Bollywood", search: { category: "bollywood" } },
+  { label: "Hollywood", search: { category: "hollywood" } },
+  { label: "South Indian", search: { category: "south" } },
+  { label: "Korean", search: { category: "korean" } },
+  { label: "Bengali", search: { category: "bengali" } },
+  { label: "Anime", search: { category: "anime" } },
+  { label: "Web Series", search: { type: "series" } },
+];
+
 export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<Partial<Movie>[]>([]);
   const [loading, setLoading] = useState(false);
   const [index, setIndex] = useState<SearchIndexItem[]>([]);
+  const { mode } = useSiteMode();
+  const navigate = useNavigate();
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -546,6 +601,31 @@ export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () =>
     return () => clearTimeout(t);
   }, [q, index]);
   if (!open) return null;
+
+  // F2: in Stream Mode a result opens the Netflix-style detail modal
+  // (via the open-title bus), never the Download Mode detail page. If
+  // no Stream UI is mounted to take the request, go home first — the
+  // pending id is consumed there and the modal opens on arrival.
+  const openResult = (m: Partial<Movie>) => {
+    if (mode === "stream" && m.id != null) {
+      const handled = requestOpenTitle(String(m.id));
+      onClose();
+      if (!handled) {
+        navigate({ to: "/", search: { view: "catalog", page: 1 } });
+      }
+      return;
+    }
+    onClose();
+  };
+
+  const goCategory = (search: Record<string, string>) => {
+    onClose();
+    navigate({
+      to: "/",
+      search: { view: "catalog", page: 1, ...search } as any,
+    });
+  };
+
   return (
     <div className="fixed inset-0 z-[90] overflow-y-auto" style={{ background: "rgba(8,12,20,0.97)" }}>
       <div className="max-w-5xl mx-auto p-6">
@@ -564,8 +644,59 @@ export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () =>
             <p>No results for "{q}"</p>
           </div>
         )}
+        {/* Stream Mode search landing (implication #7): before typing,
+            the search surface is a browse surface — genre pills plus a
+            full category list, like the new Netflix TV search tab and
+            the mobile Categories screen. Stream Mode only. */}
+        {mode === "stream" && !q.trim() && (
+          <div className="animate-fade-up">
+            <h3 className="text-sm font-bold uppercase tracking-wider text-[#94A3B8]">Browse Genres</h3>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {SEARCH_GENRES.map((g) => (
+                <button
+                  key={g}
+                  type="button"
+                  onClick={() => goCategory({ genres: g })}
+                  className="rounded-full border border-white/25 px-4 py-1.5 text-[13px] font-semibold text-white/90 transition hover:border-white hover:bg-white/10"
+                >
+                  {g}
+                </button>
+              ))}
+            </div>
+            <h3 className="mt-8 text-sm font-bold uppercase tracking-wider text-[#94A3B8]">Categories</h3>
+            <div className="mt-2 divide-y divide-white/8">
+              {SEARCH_CATEGORIES.map((c) => (
+                <button
+                  key={c.label}
+                  type="button"
+                  onClick={() => goCategory(c.search)}
+                  className="flex w-full items-center justify-between py-3 text-left text-[15px] font-medium text-[#F1F5F9] transition hover:text-[#06B6D4]"
+                >
+                  {c.label}
+                  <ChevronRight size={16} className="text-[#64748B]" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
-          {results.map((m) => <div key={m.id} onClick={onClose}><MovieCard movie={m} /></div>)}
+          {results.map((m) => (
+            <div
+              key={m.id}
+              onClick={mode === "stream" ? undefined : onClose}
+              onClickCapture={
+                mode === "stream"
+                  ? (e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      openResult(m);
+                    }
+                  : undefined
+              }
+            >
+              <MovieCard movie={m} />
+            </div>
+          ))}
         </div>
       </div>
     </div>
