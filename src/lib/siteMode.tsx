@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useLayoutEffect, useState, type ReactNode } from "react";
 
 // ============================================================================
 // FUTURE PREMIUM GROUNDWORK — single gate for Stream Mode.
@@ -11,6 +11,9 @@ export const STREAM_MODE_FREE = true;
 
 export type SiteMode = "download" | "stream";
 
+// THE one and only storage key for the mode. Every consumer reads/writes the
+// mode exclusively through this module's provider — no other key, no local
+// copies, no per-route state.
 const STORAGE_KEY = "cv_site_mode";
 
 type SiteModeCtx = { mode: SiteMode; setMode: (m: SiteMode) => void };
@@ -18,9 +21,6 @@ type SiteModeCtx = { mode: SiteMode; setMode: (m: SiteMode) => void };
 const SiteModeContext = createContext<SiteModeCtx>({ mode: "download", setMode: () => {} });
 
 function readSavedMode(): SiteMode {
-  // Client: read the saved choice synchronously so the very first render
-  // already reflects it (round 1 applied it in an effect, which made the
-  // toggle and stream-mode UI "mount late" / flicker). Server: default.
   if (typeof window === "undefined") return "download";
   try {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -31,10 +31,40 @@ function readSavedMode(): SiteMode {
   return "download";
 }
 
+// Layout effect on the client (runs during commit, before the browser
+// paints the hydrated tree); plain effect on the server to avoid SSR
+// useLayoutEffect warnings.
+const useIsoLayoutEffect = typeof window !== "undefined" ? useLayoutEffect : useEffect;
+
 export function SiteModeProvider({ children }: { children: ReactNode }) {
-  // Default is Download Mode (the classic experience); a returning visitor's
-  // saved Stream Mode applies from the first client render, not after mount.
-  const [mode, setModeState] = useState<SiteMode>(readSavedMode);
+  // CRITICAL: the initial state MUST equal the server render ("download")
+  // so the client's first render matches the SSR HTML exactly.
+  //
+  // Round 2 read localStorage inside the useState initializer. That made the
+  // first client render differ from the SSR markup whenever a visitor had
+  // saved "stream" — and React hydration ADOPTS the server-rendered DOM
+  // attributes without patching them, so the toggle (and every other
+  // mode-dependent element) kept its server-rendered "Download" appearance
+  // after every full page load, even though the live state was "stream".
+  // Clicking "▶ Stream" was then a state no-op (already "stream"), so
+  // nothing ever re-rendered to correct the DOM — the mode looked dead on
+  // fresh loads and only "came alive" after a client-side navigation
+  // remounted components with the true state.
+  const [mode, setModeState] = useState<SiteMode>("download");
+
+  // Apply the saved choice immediately after mount, before first paint:
+  // this is a real state update, so React re-renders and patches the DOM to
+  // the saved mode in the same frame hydration completes.
+  useIsoLayoutEffect(() => {
+    const saved = readSavedMode();
+    if (saved !== "download") setModeState(saved);
+    // Keep multiple open tabs in sync with each other.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY) setModeState(readSavedMode());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   const setMode = (m: SiteMode) => {
     if (m === "stream" && !STREAM_MODE_FREE) return; // gated off by the flag

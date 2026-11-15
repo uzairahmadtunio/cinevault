@@ -36,7 +36,13 @@ function prepare(rows: { id: string; title: string; thumbnail: string | null; ye
   return rows
     .filter((r) => r && r.title)
     .map((r) => {
-      const display = cleanTitle(r.title) || r.title;
+      const cleaned = cleanTitle(r.title) || r.title;
+      // Some stored titles carry leading junk glyphs (e.g. a mis-decoded
+      // "" at the start) that cleanTitle leaves in place — strip leading
+      // non-alphanumeric characters from the DISPLAY title so suggestion
+      // rows never show the stray glyph. Matching is unaffected (the
+      // normalizer drops those characters anyway).
+      const display = cleaned.replace(/^[^\p{L}\p{N}]+/u, "").trim() || cleaned;
       const norm = normalizeForSearch(display);
       return {
         id: String(r.id),

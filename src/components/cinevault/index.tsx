@@ -549,6 +549,7 @@ export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () =>
 
 /* ---------------- Hero Slider ---------------- */
 export function HeroSlider() {
+  const { mode } = useSiteMode();
   const [slides, setSlides] = useState<Partial<Movie>[]>(FEATURED_FALLBACK);
   const [i, setI] = useState(0);
   useEffect(() => {
@@ -581,7 +582,11 @@ export function HeroSlider() {
         <p className="text-[#94a3b8] mt-2 max-w-2xl line-clamp-2 hidden md:block">{s.description}</p>
         <div className="flex gap-3 mt-4">
           <Link to="/movie/$id" params={{ id: String(s.id || 1) }} className="inline-flex items-center gap-2 bg-[#06B6D4] hover:bg-[#0891B2] text-white px-5 py-2.5 rounded font-semibold text-sm">
-            <Download size={16} /> Download Now
+            {mode === "stream" ? (
+              <><Play size={16} fill="currentColor" /> Watch Now</>
+            ) : (
+              <><Download size={16} /> Download Now</>
+            )}
           </Link>
           <Link to="/movie/$id" params={{ id: String(s.id || 1) }} className="inline-flex items-center gap-2 border border-[#06B6D4] text-[#06B6D4] hover:bg-[rgba(6,182,212,0.1)] px-5 py-2.5 rounded font-semibold text-sm">
             <Info size={16} /> More Info
