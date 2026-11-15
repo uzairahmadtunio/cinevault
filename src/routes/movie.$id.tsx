@@ -9,6 +9,7 @@ import {
   parseEpisodes, pickBestQualityLink, pickCardStream, validQualities, validRating,
 } from "@/lib/mediaHelpers";
 import { useSiteMode } from "@/lib/siteMode";
+import { MyListButton } from "@/components/stream/MyListButton";
 
 export const Route = createFileRoute("/movie/$id")({
   component: MovieDetail,
@@ -206,6 +207,9 @@ function MovieDetail() {
               {movie.platform && (
                 <span className="px-2 py-1 rounded text-white font-semibold" style={{ background: platformColor(movie.platform) }}>{movie.platform}</span>
               )}
+            </div>
+            <div className="mt-4">
+              <MyListButton movie={movie} variant="full" />
             </div>
           </div>
         </div>

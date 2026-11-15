@@ -434,10 +434,38 @@ export const extractDirectLink = createServerFn({ method: "POST" })
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
       ];
 
+      // ONE consistent UA + a shared cookie jar for the whole chain:
+      // hubcloud's drive page sets a session cookie that its
+      // hubcloud.php step expects back; dropping cookies (or switching
+      // UA mid-session) makes the direct-hubcloud flow look like a bot
+      // and gets it blocked even when the mdrive-led flow succeeds.
+      const SESSION_UA = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
+      const cookieJar = new Map<string, string>();
+      const cookieHeader = () =>
+        Array.from(cookieJar.entries())
+          .map(([k, v]) => `${k}=${v}`)
+          .join("; ");
+      const storeCookies = (response: Response) => {
+        try {
+          const list: string[] =
+            typeof (response.headers as any).getSetCookie === "function"
+              ? (response.headers as any).getSetCookie()
+              : [response.headers.get("set-cookie") || ""];
+          for (const raw of list) {
+            const first = String(raw).split(";")[0];
+            const eq = first.indexOf("=");
+            if (eq > 0) {
+              cookieJar.set(first.slice(0, eq).trim(), first.slice(eq + 1).trim());
+            }
+          }
+        } catch {
+          /* cookie persistence is best-effort */
+        }
+      };
+
       const fetchPage = async (pageUrl: string, referer: string): Promise<{ html: string; finalUrl: string }> => {
-        const randomUA = USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
         const fetchHeaders: any = {
-          "User-Agent": randomUA,
+          "User-Agent": SESSION_UA,
           "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
           "Accept-Language": "en-US,en;q=0.5",
           "Referer": referer,
@@ -445,6 +473,8 @@ export const extractDirectLink = createServerFn({ method: "POST" })
           "Sec-Fetch-Mode": "navigate",
           "Sec-Fetch-Site": "cross-site",
         };
+        const cookies = cookieHeader();
+        if (cookies) fetchHeaders["Cookie"] = cookies;
 
         for (let attempt = 0; attempt < 2; attempt++) {
           try {
@@ -453,7 +483,8 @@ export const extractDirectLink = createServerFn({ method: "POST" })
               redirect: "follow",
               signal: AbortSignal.timeout(4000), // 4s timeout to avoid serverless function execution limits
             });
-            
+            storeCookies(response);
+
             if (response.ok) {
               const text = await response.text();
               return { html: text, finalUrl: response.url || pageUrl };
@@ -706,5 +737,106 @@ export const extractDirectLink = createServerFn({ method: "POST" })
         isFallback: true,
         error: `Extraction failed: ${error.message || String(error)}. Defaulted to source.` 
       };
+    }
+  });
+
+/* ------------------------------------------------------------------
+ * Stream Mode support (added for the Netflix-style Stream Mode):
+ *  - fetchMoviesByIds: hydrate Continue Watching / My List snapshots
+ *    (which store poster only) into full rows with backdrops.
+ *  - fetchTrailer: resolve a title's official YouTube trailer key via
+ *    TMDb. The API key is read from the TMDB_API_KEY server env var
+ *    INSIDE the handler — it never reaches the client bundle.
+ * ------------------------------------------------------------------ */
+
+export const fetchMoviesByIds = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      ids: z.array(z.union([z.string(), z.number()])).max(60),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const ids = (data.ids || []).map((x) => String(x)).filter(Boolean);
+    if (!ids.length) return { movies: [] as any[] };
+    const { data: rows, error } = await adminClient.from("movies").select("*").in("id", ids);
+    if (error) {
+      console.error("fetchMoviesByIds error:", error);
+      return { movies: [] as any[] };
+    }
+    return { movies: sanitizeMovies(rows as any[]) };
+  });
+
+type TrailerCacheEntry = { key: string | null; at: number };
+const trailerCache = new Map<string, TrailerCacheEntry>();
+const TRAILER_TTL_MS = 24 * 3600 * 1000;
+
+export const fetchTrailer = createServerFn({ method: "POST" })
+  .validator(
+    z.object({
+      title: z.string().min(1).max(300),
+      year: z.number().int().nullable().optional(),
+      type: z.string().optional(),
+      tmdbId: z.number().int().nullable().optional(),
+    }),
+  )
+  .handler(async ({ data }) => {
+    const apiKey = process.env.TMDB_API_KEY;
+    if (!apiKey) return { key: null as string | null, reason: "no-key" };
+
+    const media = data.type === "series" ? "tv" : "movie";
+    // Stored titles can end with " (YYYY)" — strip it for the TMDb query.
+    const query = data.title.replace(/\s*\(\d{4}\)\s*$/, "").trim() || data.title;
+    const cacheKey = `${media}:${data.tmdbId ?? `${query.toLowerCase()}|${data.year ?? ""}`}`;
+    const cached = trailerCache.get(cacheKey);
+    if (cached && Date.now() - cached.at < TRAILER_TTL_MS) {
+      return { key: cached.key, reason: cached.key ? "ok" : "not-found" };
+    }
+
+    const base = "https://api.themoviedb.org/3";
+    const tmdbGet = async (path: string) => {
+      const res = await fetch(`${base}${path}${path.includes("?") ? "&" : "?"}api_key=${apiKey}`, {
+        headers: { accept: "application/json" },
+      });
+      if (!res.ok) throw new Error(`TMDb ${res.status}`);
+      return res.json();
+    };
+
+    try {
+      let tmdbId: number | null = data.tmdbId ?? null;
+      if (!tmdbId) {
+        const yearParam =
+          data.year != null
+            ? media === "tv"
+              ? `&first_air_date_year=${data.year}`
+              : `&primary_release_year=${data.year}`
+            : "";
+        let search = await tmdbGet(
+          `/search/${media}?query=${encodeURIComponent(query)}${yearParam}&include_adult=false&page=1`,
+        );
+        let results: any[] = search?.results || [];
+        if (!results.length && yearParam) {
+          search = await tmdbGet(
+            `/search/${media}?query=${encodeURIComponent(query)}&include_adult=false&page=1`,
+          );
+          results = search?.results || [];
+        }
+        tmdbId = results.length ? Number(results[0].id) : null;
+      }
+      if (!tmdbId) {
+        trailerCache.set(cacheKey, { key: null, at: Date.now() });
+        return { key: null as string | null, reason: "not-found" };
+      }
+
+      const videos = await tmdbGet(`/${media}/${tmdbId}/videos?language=en-US`);
+      const yt: any[] = (videos?.results || []).filter((v: any) => v?.site === "YouTube" && v?.key);
+      const score = (v: any) =>
+        (v.type === "Trailer" ? 4 : v.type === "Teaser" ? 2 : 1) + (v.official ? 2 : 0);
+      yt.sort((a, b) => score(b) - score(a));
+      const key = yt.length ? String(yt[0].key) : null;
+      trailerCache.set(cacheKey, { key, at: Date.now() });
+      return { key, reason: key ? "ok" : "not-found" };
+    } catch (e) {
+      console.error("fetchTrailer error:", e);
+      return { key: null as string | null, reason: "error" };
     }
   });

@@ -10,6 +10,8 @@ import { useSiteMode } from "@/lib/siteMode";
 import { fuzzyFind, getSearchIndex, normalizeForSearch, type SearchIndexItem } from "@/lib/searchIndex";
 import { continueWatchingUrl, loadContinueWatching, removeContinueWatching, type CWEntry } from "@/lib/continueWatching";
 import { ChevronLeft, ChevronRight, Search as SearchIcon, AlertCircle, SlidersHorizontal, X, Sparkles, Zap, Clapperboard, Globe, Film, Shield, Bookmark, TrendingUp, Play } from "lucide-react";
+import { StreamExperience } from "@/components/stream/StreamHome";
+import { TitleDetailModal } from "@/components/stream/TitleDetailModal";
 import { CURRENT_MIRROR_INDEX, BASE_DOMAIN, getActiveCatalogUrl, getCrossDomainCatalogUrl, isMirrorHostname } from "@/lib/utils/domainConfig";
 
 export const Route = createFileRoute("/")({
@@ -413,6 +415,8 @@ function Home() {
 
   const { mode } = useSiteMode();
   const [cwEntries, setCwEntries] = useState<CWEntry[]>([]);
+  // Stream Mode detail modal (Netflix-style) — holds the open title's id.
+  const [modalId, setModalId] = useState<string | null>(null);
   const [searchIdx, setSearchIdx] = useState<SearchIndexItem[]>([]);
   const [suggestOpen, setSuggestOpen] = useState(false);
   
@@ -702,6 +706,57 @@ function Home() {
     // Force the catalog view when the explicit view parameter is present.
   } else if (showLandingOnly || !isCatalogDomain) {
     return <PremiumLandingPage />;
+  }
+
+  // STREAM MODE: the whole home becomes the Netflix-style streaming
+  // experience (billboard + rows + detail modal). Download Mode below is
+  // untouched. Search/filter state still comes from the hooks above, so
+  // the smart search behaves identically in both modes.
+  if (mode === "stream") {
+    const resultsLabel = search
+      ? `Results for "${search}"`
+      : genres
+        ? `${genres} Titles`
+        : years
+          ? `Released in ${years}`
+          : type === "series"
+            ? "Web Series"
+            : activeFilter !== "all"
+              ? activeFilter
+              : "Browse";
+    return (
+      <SiteShell>
+        <StreamExperience
+          view={filtersActive ? "results" : "home"}
+          cwEntries={cwEntries}
+          onRemoveCw={removeCw}
+          onOpenTitle={(id) => setModalId(id)}
+          resultsParams={{
+            filter: getFilterValue(),
+            search: search || "",
+            genres: genres || "",
+            years: years || "",
+          }}
+          searchQuery={search || ""}
+          didYouMean={didYouMean}
+          onDidYouMean={() => {
+            if (didYouMean) handleSearch(didYouMean);
+          }}
+          fuzzy={fuzzyFallback}
+          searchInput={searchInput}
+          onSearchChange={handleSearch}
+          suggestions={suggestions}
+          onSuggestionPick={(id) => setModalId(id)}
+          resultsLabel={resultsLabel}
+          onResetAll={handleResetAll}
+        />
+        <TitleDetailModal
+          movieId={modalId}
+          onClose={() => setModalId(null)}
+          onOpenTitle={(id) => setModalId(id)}
+        />
+      </SiteShell>
+    );
   }
 
   return (

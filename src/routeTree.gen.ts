@@ -14,6 +14,7 @@ import { Route as R4kMoviesRouteImport } from './routes/4k-movies'
 import { Route as AboutUsRouteImport } from './routes/about-us'
 import { Route as ContactUsRouteImport } from './routes/contact-us'
 import { Route as MoviesRouteImport } from './routes/movies'
+import { Route as MyListRouteImport } from './routes/my-list'
 import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
 import { Route as SeriesRouteImport } from './routes/series'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
@@ -53,6 +54,11 @@ const ContactUsRoute = ContactUsRouteImport.update({
 const MoviesRoute = MoviesRouteImport.update({
   id: '/movies',
   path: '/movies',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MyListRoute = MyListRouteImport.update({
+  id: '/my-list',
+  path: '/my-list',
   getParentRoute: () => rootRouteImport,
 } as any)
 const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
@@ -137,6 +143,7 @@ export interface FileRoutesByFullPath {
   '/about-us': typeof AboutUsRoute
   '/contact-us': typeof ContactUsRoute
   '/movies': typeof MoviesRouteWithChildren
+  '/my-list': typeof MyListRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/series': typeof SeriesRoute
   '/admin/add': typeof AdminAddRoute
@@ -159,6 +166,7 @@ export interface FileRoutesByTo {
   '/about-us': typeof AboutUsRoute
   '/contact-us': typeof ContactUsRoute
   '/movies': typeof MoviesRouteWithChildren
+  '/my-list': typeof MyListRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/series': typeof SeriesRoute
   '/admin/add': typeof AdminAddRoute
@@ -182,6 +190,7 @@ export interface FileRoutesById {
   '/about-us': typeof AboutUsRoute
   '/contact-us': typeof ContactUsRoute
   '/movies': typeof MoviesRouteWithChildren
+  '/my-list': typeof MyListRoute
   '/privacy-policy': typeof PrivacyPolicyRoute
   '/series': typeof SeriesRoute
   '/admin/add': typeof AdminAddRoute
@@ -206,6 +215,7 @@ export interface FileRouteTypes {
     | '/about-us'
     | '/contact-us'
     | '/movies'
+    | '/my-list'
     | '/privacy-policy'
     | '/series'
     | '/admin/add'
@@ -228,6 +238,7 @@ export interface FileRouteTypes {
     | '/about-us'
     | '/contact-us'
     | '/movies'
+    | '/my-list'
     | '/privacy-policy'
     | '/series'
     | '/admin/add'
@@ -250,6 +261,7 @@ export interface FileRouteTypes {
     | '/about-us'
     | '/contact-us'
     | '/movies'
+    | '/my-list'
     | '/privacy-policy'
     | '/series'
     | '/admin/add'
@@ -273,6 +285,7 @@ export interface RootRouteChildren {
   AboutUsRoute: typeof AboutUsRoute
   ContactUsRoute: typeof ContactUsRoute
   MoviesRoute: typeof MoviesRouteWithChildren
+  MyListRoute: typeof MyListRoute
   PrivacyPolicyRoute: typeof PrivacyPolicyRoute
   SeriesRoute: typeof SeriesRoute
   AdminAddRoute: typeof AdminAddRoute
@@ -321,6 +334,13 @@ declare module '@tanstack/react-router' {
       path: '/movies'
       fullPath: '/movies'
       preLoaderRoute: typeof MoviesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/my-list': {
+      id: '/my-list'
+      path: '/my-list'
+      fullPath: '/my-list'
+      preLoaderRoute: typeof MyListRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/privacy-policy': {
@@ -454,6 +474,7 @@ const rootRouteChildren: RootRouteChildren = {
   AboutUsRoute: AboutUsRoute,
   ContactUsRoute: ContactUsRoute,
   MoviesRoute: MoviesRouteWithChildren,
+  MyListRoute: MyListRoute,
   PrivacyPolicyRoute: PrivacyPolicyRoute,
   SeriesRoute: SeriesRoute,
   AdminAddRoute: AdminAddRoute,

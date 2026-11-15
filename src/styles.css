@@ -92,3 +92,11 @@
   to { opacity: 1; transform: translateY(0); }
 }
 .animate-fade-up { animation: fadeUp 0.5s ease-out both; }
+
+/* Stream Mode billboard/modal fallback when a title has no trailer:
+   a slow cinematic zoom on the backdrop still. */
+@keyframes kenburns {
+  from { transform: scale(1) translateX(0); }
+  to { transform: scale(1.14) translateX(-1.5%); }
+}
+.animate-kenburns { animation: kenburns 22s ease-in-out infinite alternate; }

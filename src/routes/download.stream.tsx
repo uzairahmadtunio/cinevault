@@ -1,10 +1,12 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
-import { Download, ShieldCheck, Copy, AlertCircle, Home, Play, Info, Check, RefreshCw, Settings, Captions, SkipForward } from "lucide-react";
-import { SiteShell, showToast, type Movie } from "@/components/cinevault";
+import { Download, ShieldCheck, Copy, AlertCircle, Home, Play, Info, Check, RefreshCw, Settings, Captions, SkipForward, ListVideo, X } from "lucide-react";
+import { QualityBadge, SiteShell, showToast, cleanTitle, titlePosterDataUrl, type Movie } from "@/components/cinevault";
 import { buildStreamUrl, decodeUrl, clientSideExtract, isValidStreamTarget } from "@/utils/linkBypasser";
-import { extractDirectLink, fetchMovieById } from "@/lib/api/server.movies";
-import { episodeBestLink, episodeNumber, parseEpisodes } from "@/lib/mediaHelpers";
+import { extractDirectLink, fetchMovieById, fetchMoviesPaginated, fetchTrendingOrTopRated } from "@/lib/api/server.movies";
+import { alternateStreamCandidates, cleanFileSize, episodeBestLink, episodeDisplayTitle, episodeNumber, parseEpisodes, pickCardStream, validQualities, validRating, type RawEpisode } from "@/lib/mediaHelpers";
+import { useSiteMode } from "@/lib/siteMode";
+import { MyListButton } from "@/components/stream/MyListButton";
 import { findContinueWatching, removeContinueWatching, upsertContinueWatching } from "@/lib/continueWatching";
 
 export const Route = createFileRoute("/download/stream")({
@@ -30,6 +32,61 @@ type SubtitleTrack = {
   src: string;
 };
 
+/* More Like This card for the watch page: in Stream Mode it plays the
+ * title (best playable source); in Download Mode it opens the detail page. */
+function WatchRelatedCard({ movie }: { movie: Movie }) {
+  const { mode } = useSiteMode();
+  const display = cleanTitle(movie.title) || movie.title;
+  const stream = pickCardStream(movie);
+  const rating = validRating(movie.imdb_rating);
+  const open = () => {
+    if (mode === "stream" && stream) {
+      window.location.assign(
+        buildStreamUrl(stream.url, {
+          id: movie.id,
+          title: display,
+          poster: movie.thumbnail,
+          ep: stream.ep,
+        }),
+      );
+    } else {
+      window.location.assign(`/movie/${movie.id}`);
+    }
+  };
+  return (
+    <div className="w-[210px] flex-none cursor-pointer sm:w-[240px]" onClick={open}>
+      <div className="relative overflow-hidden rounded-md bg-[#181818]">
+        <img
+          src={movie.banner || movie.thumbnail || titlePosterDataUrl(display)}
+          alt={display}
+          loading="lazy"
+          className="aspect-video w-full object-cover"
+        />
+        {movie.quality && (
+          <div className="absolute left-1.5 top-1.5">
+            <QualityBadge quality={movie.quality} size="sm" />
+          </div>
+        )}
+        {stream && (
+          <span className="absolute bottom-1.5 left-1.5 flex h-8 w-8 items-center justify-center rounded-full bg-[#06B6D4] text-white shadow-lg shadow-cyan-500/40">
+            <Play size={14} fill="currentColor" />
+          </span>
+        )}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/30 to-transparent px-2 pb-1.5 pt-6">
+          <div className="line-clamp-1 text-[13px] font-semibold text-white drop-shadow">
+            {display}
+          </div>
+        </div>
+      </div>
+      <div className="mt-1.5 flex items-center gap-2 px-0.5 text-xs text-slate-400">
+        {rating != null && <span className="font-bold text-amber-400">★ {rating.toFixed(1)}</span>}
+        {movie.year != null && <span>{movie.year}</span>}
+        {movie.type === "series" && <span>Web Series</span>}
+      </div>
+    </div>
+  );
+}
+
 function DownloadStreamPage() {
   const { target, mid, title, poster, ep, t } = Route.useSearch();
   const [decodedUrl, setDecodedUrl] = useState<string | null>(null);
@@ -46,6 +103,10 @@ function DownloadStreamPage() {
   const [extractionError, setExtractionError] = useState<string | null>(null);
   const [isFallbackMode, setIsFallbackMode] = useState(false);
   
+  // The source URL that actually extracted (differs from the requested
+  // target when the fallback chain rescued a blocked primary source).
+  const [workingUrl, setWorkingUrl] = useState<string | null>(null);
+
   // Settings Panel Overlay state
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [copiedStream, setCopiedStream] = useState(false);
@@ -105,87 +166,126 @@ function DownloadStreamPage() {
     if (secondsLeft === 0 && streams.length === 0 && !isExtracting && !extractionError) {
       setIsExtracting(true);
       setStatusMessage("Extracting direct multi-quality streams...");
-      
+
       (async () => {
-        try {
-          // 1. Try server-side bypass extraction first
-          const res = await extractDirectLink({ data: { url: decodedUrl } });
-          
-          if (res.success && res.streams && res.streams.length > 0 && !res.isFallback) {
-            setIsExtracting(false);
-            setStreams(res.streams);
-            setActiveStream(res.streams[0]); // default to highest quality parsed
-            if (res.subtitles && res.subtitles.length > 0) {
-              setSubtitles(res.subtitles);
-            }
-            setStatusMessage("Stream assets successfully extracted!");
-            showToast(`HTML extracted!`);
-          } else {
-            // 2. Server-side failed or returned fallback. Fallback to client-side extraction.
-            console.log("[CineVault Player] Server-side bypass failed or returned fallback. Trying client-side fallback...");
-            setStatusMessage("Serverless restriction detected. Launching client-side fallback bypasser...");
-            
-            const clientRes = await clientSideExtract(decodedUrl);
-            setIsExtracting(false);
-            
-            if (clientRes.success && clientRes.streams && clientRes.streams.length > 0) {
-              setStreams(clientRes.streams);
-              setActiveStream(clientRes.streams[0]);
-              if (clientRes.subtitles && clientRes.subtitles.length > 0) {
-                setSubtitles(clientRes.subtitles);
-              }
-              setStatusMessage("Client-side bypass successful!");
-              showToast(`Extracted ${clientRes.streams.length} stream qualities via client-side bypass!`);
-            } else {
-              // 3. Both failed: fallback to playing original URL as "Source"
-              const fallbackStreams = res.streams || [{ quality: "Source", url: decodedUrl }];
-              setStreams(fallbackStreams);
-              setActiveStream(fallbackStreams[0]);
-              setIsFallbackMode(true);
-              setExtractionError(res.error || clientRes.error || "Failed to bypass stream. Using fallback direct source.");
-              setStatusMessage("Using original source fallback link.");
-              showToast("Bypasser failed. Defaulting to original link.");
-            }
-          }
-        } catch (err: any) {
-          console.warn("[CineVault Player] Serverless extraction threw error. Trying client-side fallback...", err);
-          setStatusMessage("Serverless error. Launching client-side fallback bypasser...");
-          
+        // Try one candidate URL: server extraction first, then (for the
+        // primary target only) the client-side bypasser.
+        const tryCandidate = async (u: string, allowClient: boolean) => {
           try {
-            const clientRes = await clientSideExtract(decodedUrl);
-            setIsExtracting(false);
-            
-            if (clientRes.success && clientRes.streams && clientRes.streams.length > 0) {
-              setStreams(clientRes.streams);
-              setActiveStream(clientRes.streams[0]);
-              if (clientRes.subtitles && clientRes.subtitles.length > 0) {
-                setSubtitles(clientRes.subtitles);
-              }
-              setStatusMessage("Client-side bypass successful!");
-              showToast(`Extracted ${clientRes.streams.length} stream qualities via client-side bypass!`);
-            } else {
-              const fallbackStreams = [{ quality: "Source", url: decodedUrl }];
-              setStreams(fallbackStreams);
-              setActiveStream(fallbackStreams[0]);
-              setIsFallbackMode(true);
-              setExtractionError(err?.message || "Failed to bypass stream. Using fallback direct source.");
-              setStatusMessage("Using original source fallback link.");
-              showToast("Bypasser failed. Defaulting to original link.");
+            const res = await extractDirectLink({ data: { url: u } });
+            if (res.success && res.streams && res.streams.length > 0 && !res.isFallback) {
+              return { ok: true as const, streams: res.streams, subtitles: res.subtitles };
             }
-          } catch (clientErr) {
-            setIsExtracting(false);
-            const fallbackStreams = [{ quality: "Source", url: decodedUrl }];
-            setStreams(fallbackStreams);
-            setActiveStream(fallbackStreams[0]);
-            setIsFallbackMode(true);
-            setExtractionError("Bypasser failed completely.");
-            setStatusMessage("Using original source fallback link.");
-            showToast("Bypasser failed. Defaulting to original link.");
+            if (allowClient) {
+              const clientRes = await clientSideExtract(u).catch(() => null);
+              if (clientRes && clientRes.success && clientRes.streams && clientRes.streams.length > 0) {
+                return { ok: true as const, streams: clientRes.streams, subtitles: clientRes.subtitles };
+              }
+            }
+            return {
+              ok: false as const,
+              fallbackStreams: res.streams,
+              error: res.error,
+            };
+          } catch (err: any) {
+            if (allowClient) {
+              const clientRes = await clientSideExtract(u).catch(() => null);
+              if (clientRes && clientRes.success && clientRes.streams && clientRes.streams.length > 0) {
+                return { ok: true as const, streams: clientRes.streams, subtitles: clientRes.subtitles };
+              }
+            }
+            return { ok: false as const, error: err?.message || String(err) };
           }
+        };
+
+        const applyStreams = (
+          newStreams: StreamQuality[],
+          newSubtitles?: { label: string; src: string }[],
+          toast?: string,
+        ) => {
+          setStreams(newStreams);
+          setActiveStream(newStreams[0]);
+          if (newSubtitles && newSubtitles.length > 0) {
+            setSubtitles(newSubtitles);
+          }
+          setStatusMessage("Stream assets successfully extracted!");
+          if (toast) showToast(toast);
+        };
+
+        try {
+          // 1) Primary target — full chain (server + client-side).
+          const primary = await tryCandidate(decodedUrl, true);
+          if (primary.ok) {
+            setWorkingUrl(decodedUrl);
+            applyStreams(primary.streams, primary.subtitles, "HTML extracted!");
+            setIsExtracting(false);
+            return;
+          }
+
+          // 2) FALLBACK CHAIN — this title's OTHER sources, playable-host
+          // first. A blocked hubcloud target falls through to the title's
+          // mdrive link instead of dead-ending on the restricted screen.
+          let lastFallbackStreams = primary.fallbackStreams;
+          let lastError = primary.error;
+          if (mid) {
+            let alts: string[] = [];
+            try {
+              const res = await fetchMovieById({ data: { id: mid } });
+              const mv = res?.movie as Movie | null;
+              if (mv) alts = alternateStreamCandidates(mv, ep ?? null, decodedUrl, 4);
+            } catch {
+              /* alternate candidates are best-effort */
+            }
+            for (let i = 0; i < alts.length; i++) {
+              setStatusMessage(
+                `Source blocked. Trying alternate source ${i + 1} of ${alts.length}...`,
+              );
+              const altAttempt = await tryCandidate(alts[i], false);
+              if (altAttempt.ok) {
+                setWorkingUrl(alts[i]);
+                applyStreams(
+                  altAttempt.streams,
+                  altAttempt.subtitles,
+                  "Alternate source found — playing now!",
+                );
+                setIsExtracting(false);
+                return;
+              }
+              if (altAttempt.fallbackStreams) lastFallbackStreams = altAttempt.fallbackStreams;
+              if (altAttempt.error) lastError = altAttempt.error;
+            }
+          }
+
+          // 3) Every candidate failed — the restricted/fallback screen on
+          // the original target, exactly as before.
+          const fallbackStreams =
+            lastFallbackStreams && lastFallbackStreams.length > 0
+              ? lastFallbackStreams
+              : [{ quality: "Source", url: decodedUrl }];
+          setWorkingUrl(decodedUrl);
+          setStreams(fallbackStreams);
+          setActiveStream(fallbackStreams[0]);
+          setIsFallbackMode(true);
+          setExtractionError(
+            lastError || "Failed to bypass stream. Using fallback direct source.",
+          );
+          setStatusMessage("Using original source fallback link.");
+          showToast("Bypasser failed. Defaulting to original link.");
+          setIsExtracting(false);
+        } catch (err: any) {
+          const fallbackStreams = [{ quality: "Source", url: decodedUrl }];
+          setWorkingUrl(decodedUrl);
+          setStreams(fallbackStreams);
+          setActiveStream(fallbackStreams[0]);
+          setIsFallbackMode(true);
+          setExtractionError(err?.message || "Bypasser failed completely.");
+          setStatusMessage("Using original source fallback link.");
+          showToast("Bypasser failed. Defaulting to original link.");
+          setIsExtracting(false);
         }
       })();
     }
-  }, [secondsLeft, decodedUrl, streams.length, isExtracting, extractionError]);
+  }, [secondsLeft, decodedUrl, streams.length, isExtracting, extractionError, mid, ep]);
 
   // Subtitle track toggling effect
   useEffect(() => {
@@ -209,6 +309,21 @@ function DownloadStreamPage() {
   const resumeAppliedRef = useRef(false);
   const [nextEp, setNextEp] = useState<{ num: number; url: string } | null>(null);
 
+  /* -------- Stream Mode player touches: series data, Up Next, ------- */
+  /* -------- Episodes panel, paused overlay                          ------- */
+  const [playerMovie, setPlayerMovie] = useState<Movie | null>(null);
+  const [allEpisodes, setAllEpisodes] = useState<RawEpisode[]>([]);
+  const [isPaused, setIsPaused] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [upNextVisible, setUpNextVisible] = useState(false);
+  const [upNextCount, setUpNextCount] = useState(10);
+  const [upNextDismissed, setUpNextDismissed] = useState(false);
+  const [episodesOpen, setEpisodesOpen] = useState(false);
+
+  /* -------- Watch page body (P0-B): storyline toggle + related ------ */
+  const [storyExpanded, setStoryExpanded] = useState(false);
+  const [related, setRelated] = useState<Movie[]>([]);
+
   // A fresh stream starts a fresh resume decision.
   useEffect(() => {
     resumeAppliedRef.current = false;
@@ -229,7 +344,8 @@ function DownloadStreamPage() {
       id: mid,
       title: title || "Unknown title",
       poster: poster || undefined,
-      target,
+      // Resume from the source that actually played, not a blocked one.
+      target: workingUrl || target,
       ep: ep ?? undefined,
       position: pos,
       duration: dur,
@@ -272,26 +388,130 @@ function DownloadStreamPage() {
       lastSaveRef.current = now;
       saveProgress();
     }
+    // Up Next: surface the card in the last ~20 seconds of an episode.
+    const v = videoRef.current;
+    if (v && nextEp && !upNextDismissed && v.duration && Number.isFinite(v.duration)) {
+      const remaining = v.duration - v.currentTime;
+      if (remaining <= 20 && remaining > 0.25) {
+        if (!upNextVisible) {
+          setUpNextVisible(true);
+          setUpNextCount(10);
+        }
+      } else if (remaining > 25 && upNextVisible) {
+        setUpNextVisible(false);
+      }
+    }
   };
 
-  /* ---------------- Next Episode ---------------- */
+  const goNextEpisode = () => {
+    if (!nextEp) return;
+    window.location.assign(
+      buildStreamUrl(nextEp.url, { id: mid, title, poster, ep: nextEp.num }),
+    );
+  };
+
+  // Up Next countdown → autoplay the next episode at zero.
   useEffect(() => {
-    if (!mid || ep == null) return;
+    if (!upNextVisible || !nextEp) return;
+    if (upNextCount <= 0) {
+      goNextEpisode();
+      return;
+    }
+    const id = window.setTimeout(() => setUpNextCount((c) => c - 1), 1000);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [upNextVisible, upNextCount, nextEp]);
+
+  // More Like This for the watch page: same-genre titles first,
+  // topped up with trending when the genre shelf is thin.
+  useEffect(() => {
+    if (!playerMovie) {
+      setRelated([]);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      let rel: Movie[] = [];
+      const g = (playerMovie.genre || "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)[0];
+      if (g) {
+        try {
+          const r: any = await fetchMoviesPaginated({
+            data: { page: 1, limit: 10, genres: g, sort: "latest" },
+          });
+          rel = ((r?.movies || []) as Movie[]).filter(
+            (x) => String(x.id) !== String(playerMovie.id),
+          );
+        } catch {
+          /* fall through to trending top-up */
+        }
+      }
+      if (rel.length < 4) {
+        try {
+          const t: any = await fetchTrendingOrTopRated({ data: { limit: 10 } });
+          const extra = ((t?.movies || []) as Movie[]).filter(
+            (x) =>
+              String(x.id) !== String(playerMovie.id) &&
+              !rel.some((y) => String(y.id) === String(x.id)),
+          );
+          rel = [...rel, ...extra];
+        } catch {
+          /* related simply stays shorter */
+        }
+      }
+      if (!cancelled) setRelated(rel.slice(0, 10));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [playerMovie]);
+
+  // Paused-overlay display values.
+  const currentEpObj =
+    ep != null ? allEpisodes.find((e, i) => episodeNumber(e, i) === ep) : undefined;
+  const currentEpExtra = currentEpObj ? episodeDisplayTitle(currentEpObj) : "";
+  const overlayTitle =
+    (title ? cleanTitle(title) : "") ||
+    title ||
+    (playerMovie ? cleanTitle(playerMovie.title) : "") ||
+    "Now Playing";
+
+  /* ------------- Series data for this title (any stream) ------------- */
+  /* Fetches the full row once: powers Next Episode, the Up Next card,  */
+  /* the in-player Episodes panel and the paused overlay's storyline.  */
+  useEffect(() => {
+    setNextEp(null);
+    setPlayerMovie(null);
+    setAllEpisodes([]);
+    setUpNextVisible(false);
+    setUpNextDismissed(false);
+    setUpNextCount(10);
+    setIsPaused(false);
+    setHasStarted(false);
+    setEpisodesOpen(false);
+    setStoryExpanded(false);
+    if (!mid) return;
     let cancelled = false;
     (async () => {
       try {
         const res = await fetchMovieById({ data: { id: mid } });
         const mv = res?.movie as Movie | null;
         if (!mv || cancelled) return;
+        setPlayerMovie(mv);
         const eps = parseEpisodes(mv);
-        const idx = eps.findIndex((e, i) => episodeNumber(e, i) === ep);
-        if (idx >= 0 && idx < eps.length - 1) {
-          const nxt = eps[idx + 1];
-          const link = episodeBestLink(nxt);
-          if (link && !cancelled) setNextEp({ num: episodeNumber(nxt, idx + 1), url: link });
+        setAllEpisodes(eps);
+        if (ep != null) {
+          const idx = eps.findIndex((e, i) => episodeNumber(e, i) === ep);
+          if (idx >= 0 && idx < eps.length - 1) {
+            const nxt = eps[idx + 1];
+            const link = episodeBestLink(nxt);
+            if (link && !cancelled) setNextEp({ num: episodeNumber(nxt, idx + 1), url: link });
+          }
         }
       } catch {
-        /* Next Episode is a nicety — never break the player for it */
+        /* Series extras are a nicety — never break the player for them */
       }
     })();
     return () => {
@@ -400,7 +620,7 @@ function DownloadStreamPage() {
   return (
     <SiteShell>
       <div className="min-h-screen bg-[#080C14] py-8 md:py-16 flex items-center justify-center px-4">
-        <div className="w-full max-w-4xl">
+        <div className="w-full max-w-6xl">
           
           {/* HEADER NAVIGATION */}
           <div className="mb-6 flex justify-between items-center">
@@ -488,6 +708,17 @@ function DownloadStreamPage() {
                     </div>
                   )}
                 </div>
+
+                {/* Episodes Panel Button (series with 2+ episodes) */}
+                {activeStream && allEpisodes.length > 1 && (
+                  <button
+                    onClick={() => setEpisodesOpen((o) => !o)}
+                    className="absolute top-4 right-16 z-20 inline-flex items-center gap-1.5 px-3 py-2 rounded-full bg-black/80 border border-cyan-500/30 text-cyan-400 hover:text-white transition duration-200 backdrop-blur-md text-[11px] font-bold"
+                    title="Episodes"
+                  >
+                    <ListVideo size={15} /> Episodes
+                  </button>
+                )}
 
                 {/* Settings Overlay Button */}
                 {activeStream && (
@@ -636,9 +867,20 @@ function DownloadStreamPage() {
                         style={{ outline: "none" }}
                         onLoadedMetadata={handleLoadedMetadata}
                         onTimeUpdate={handleTimeUpdate}
-                        onPause={() => saveProgress()}
+                        onPlay={() => {
+                          setIsPaused(false);
+                          setHasStarted(true);
+                        }}
+                        onPause={() => {
+                          saveProgress();
+                          setIsPaused(true);
+                        }}
                         onEnded={() => {
                           if (mid) removeContinueWatching(mid, ep);
+                          if (nextEp && !upNextDismissed) {
+                            setUpNextVisible(true);
+                            setUpNextCount(10);
+                          }
                         }}
                       >
                         {/* Inject subtitles dynamically */}
@@ -653,6 +895,29 @@ function DownloadStreamPage() {
                           />
                         ))}
                       </video>
+
+                      {/* PAUSED OVERLAY — title + episode + storyline, Netflix-style */}
+                      {isPaused && hasStarted && (
+                        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-black/45 px-6 text-center pointer-events-none">
+                          <div className="text-[10px] font-bold uppercase tracking-[0.3em] text-white/60 mb-2">
+                            You're watching
+                          </div>
+                          <div className="max-w-lg text-xl md:text-3xl font-black text-white line-clamp-2 drop-shadow">
+                            {overlayTitle}
+                          </div>
+                          {ep != null && (
+                            <div className="mt-1.5 text-sm font-bold text-[#06B6D4]">
+                              Episode {ep}
+                              {currentEpExtra ? ` · ${currentEpExtra}` : ""}
+                            </div>
+                          )}
+                          {playerMovie?.description && (
+                            <p className="mt-3 max-w-md text-xs md:text-sm leading-relaxed text-slate-300/90 line-clamp-3">
+                              {playerMovie.description}
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     /* FAILURE / RETRY */
@@ -675,7 +940,334 @@ function DownloadStreamPage() {
                     </div>
                   )}
                 </div>
+
+                {/* UP NEXT CARD — last ~20s of an episode + on end */}
+                {upNextVisible && nextEp && (
+                  <div className="absolute bottom-16 right-3 md:right-5 z-30 w-[280px] max-w-[85%] rounded-xl bg-[#181818]/95 border border-white/15 shadow-2xl p-3.5 backdrop-blur animate-fade-up">
+                    <div className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                      Up Next
+                    </div>
+                    <div className="text-white font-bold text-sm mt-1 line-clamp-1">
+                      {overlayTitle} — Episode {nextEp.num}
+                    </div>
+                    <div className="text-xs text-slate-400 mt-0.5">
+                      Playing in {upNextCount}s
+                    </div>
+                    <div className="flex gap-2 mt-3">
+                      <button
+                        onClick={goNextEpisode}
+                        className="flex-1 bg-white text-black text-xs font-bold py-2 rounded-md hover:bg-white/85 flex items-center justify-center gap-1.5 transition"
+                      >
+                        <Play size={13} fill="currentColor" /> Play Now
+                      </button>
+                      <button
+                        onClick={() => {
+                          setUpNextDismissed(true);
+                          setUpNextVisible(false);
+                        }}
+                        className="px-3 border border-white/25 text-white text-xs font-bold py-2 rounded-md hover:bg-white/10 transition"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* EPISODES PANEL — in-player episode list with direct play */}
+                {episodesOpen && allEpisodes.length > 1 && (
+                  <div className="absolute inset-y-0 right-0 z-40 w-[320px] max-w-[88%] bg-[#101623]/[0.98] border-l border-white/10 shadow-2xl flex flex-col animate-fade-up">
+                    <div className="flex items-center justify-between px-4 py-3 border-b border-white/10">
+                      <div className="text-sm font-bold text-white">
+                        Episodes{" "}
+                        <span className="text-slate-400 font-medium">
+                          · {allEpisodes.length}
+                        </span>
+                      </div>
+                      <button
+                        onClick={() => setEpisodesOpen(false)}
+                        aria-label="Close episodes"
+                        className="text-slate-400 hover:text-white transition"
+                      >
+                        <X size={18} />
+                      </button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto py-1">
+                      {allEpisodes.map((e, i) => {
+                        const num = episodeNumber(e, i);
+                        const link = episodeBestLink(e);
+                        const extra = episodeDisplayTitle(e);
+                        const epCw = mid ? findContinueWatching(mid, num) : undefined;
+                        const pct =
+                          epCw && epCw.duration > 0
+                            ? Math.min(100, (epCw.position / epCw.duration) * 100)
+                            : 0;
+                        const isCurrent = ep != null && num === ep;
+                        return (
+                          <button
+                            key={num}
+                            disabled={!link}
+                            onClick={() => {
+                              if (!link) return;
+                              window.location.assign(
+                                buildStreamUrl(link, { id: mid, title, poster, ep: num }),
+                              );
+                            }}
+                            className={`flex w-full items-center gap-3 px-4 py-2.5 text-left transition ${
+                              isCurrent
+                                ? "bg-[#06B6D4]/10"
+                                : link
+                                  ? "hover:bg-white/5"
+                                  : "opacity-45 cursor-not-allowed"
+                            }`}
+                          >
+                            <span
+                              className={`w-7 flex-none text-center text-base font-bold ${
+                                isCurrent ? "text-[#06B6D4]" : "text-slate-300"
+                              }`}
+                            >
+                              {num}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate text-[13px] font-semibold text-white">
+                                {extra || `Episode ${num}`}
+                              </span>
+                              {pct > 0 && (
+                                <span className="mt-1 block h-[3px] w-32 max-w-full rounded bg-[#404040]">
+                                  <span
+                                    className="block h-full rounded bg-[#06B6D4]"
+                                    style={{ width: `${pct}%` }}
+                                  />
+                                </span>
+                              )}
+                            </span>
+                            {isCurrent ? (
+                              <span className="flex-none text-[10px] font-bold uppercase tracking-wider text-[#06B6D4]">
+                                Playing
+                              </span>
+                            ) : (
+                              <Play size={14} className="flex-none text-slate-400" />
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
               </div>
+
+              {/* WATCH DETAILS — title, meta, storyline, download options */}
+              {playerMovie && (
+                <section className="animate-fade-up">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <h1 className="max-w-2xl text-2xl font-black leading-tight text-white md:text-4xl">
+                      {overlayTitle}
+                    </h1>
+                    <MyListButton movie={playerMovie} variant="full" />
+                  </div>
+                  <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-sm">
+                    {validRating(playerMovie.imdb_rating) != null && (
+                      <span className="font-bold text-amber-400">
+                        ★ {validRating(playerMovie.imdb_rating)!.toFixed(1)}
+                      </span>
+                    )}
+                    {playerMovie.year != null && (
+                      <span className="text-slate-200">{playerMovie.year}</span>
+                    )}
+                    {playerMovie.quality && (
+                      <QualityBadge quality={playerMovie.quality} size="sm" />
+                    )}
+                    {playerMovie.duration && (
+                      <span className="text-slate-400">{playerMovie.duration}</span>
+                    )}
+                    <span className="text-slate-400">
+                      {playerMovie.type === "series" ? "Web Series" : "Movie"}
+                    </span>
+                    {playerMovie.language && (
+                      <span className="text-slate-400">{playerMovie.language}</span>
+                    )}
+                    {cleanFileSize(playerMovie.file_size) && (
+                      <span className="text-slate-400">
+                        {cleanFileSize(playerMovie.file_size)}
+                      </span>
+                    )}
+                    {playerMovie.genre && (
+                      <span className="text-slate-500">
+                        {playerMovie.genre
+                          .split(",")
+                          .map((s) => s.trim())
+                          .filter(Boolean)
+                          .slice(0, 4)
+                          .join(" · ")}
+                      </span>
+                    )}
+                  </div>
+                  {ep != null && (
+                    <div className="mt-2 text-sm font-bold text-[#06B6D4]">
+                      Episode {ep}
+                      {currentEpExtra ? ` · ${currentEpExtra}` : ""}
+                    </div>
+                  )}
+
+                  {playerMovie.description && (
+                    <div className="mt-4 max-w-3xl">
+                      <p
+                        className={`text-sm leading-relaxed text-slate-300 md:text-[15px] ${
+                          storyExpanded ? "" : "line-clamp-3"
+                        }`}
+                      >
+                        {playerMovie.description}
+                      </p>
+                      <button
+                        onClick={() => setStoryExpanded((s) => !s)}
+                        className="mt-1.5 text-[13px] font-semibold text-[#06B6D4] transition hover:text-cyan-300"
+                      >
+                        {storyExpanded ? "See Less" : "See More"}
+                      </button>
+                    </div>
+                  )}
+
+                  <div className="mt-4 space-y-1.5 text-[13px] leading-relaxed">
+                    {playerMovie.cast_names && (
+                      <p>
+                        <span className="text-slate-500">Cast: </span>
+                        <span className="text-slate-200">{playerMovie.cast_names}</span>
+                      </p>
+                    )}
+                    {playerMovie.director && (
+                      <p>
+                        <span className="text-slate-500">
+                          {playerMovie.type === "series" ? "Creator: " : "Director: "}
+                        </span>
+                        <span className="text-slate-200">{playerMovie.director}</span>
+                      </p>
+                    )}
+                    {playerMovie.platform && (
+                      <p>
+                        <span className="text-slate-500">Platform: </span>
+                        <span className="text-slate-200">{playerMovie.platform}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {validQualities(playerMovie).length > 0 && (
+                    <div className="mt-6">
+                      <h2 className="mb-2.5 text-base font-bold text-white">
+                        Download Options
+                      </h2>
+                      <div className="flex flex-wrap gap-2">
+                        {validQualities(playerMovie).map((q) => (
+                          <button
+                            key={q.label}
+                            onClick={() =>
+                              window.location.assign(
+                                buildStreamUrl(q.url, {
+                                  id: mid,
+                                  title: overlayTitle,
+                                  poster,
+                                  ep,
+                                }),
+                              )
+                            }
+                            className="inline-flex items-center gap-1.5 rounded-lg border border-cyan-500/25 bg-[#111827] px-3.5 py-2 text-[13px] font-semibold text-slate-200 transition hover:border-[#06B6D4] hover:text-[#06B6D4]"
+                          >
+                            <Download size={14} /> {q.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* EPISODES — watch page list (series) */}
+              {playerMovie && allEpisodes.length > 0 && (
+                <section className="animate-fade-up">
+                  <h2 className="text-lg font-bold text-white">
+                    Episodes{" "}
+                    <span className="text-sm font-medium text-slate-400">
+                      · {allEpisodes.length}
+                      {playerMovie.season_number
+                        ? ` · Season ${playerMovie.season_number}`
+                        : ""}
+                    </span>
+                  </h2>
+                  <div className="mt-2">
+                    {allEpisodes.map((e, i) => {
+                      const num = episodeNumber(e, i);
+                      const link = episodeBestLink(e);
+                      const extra = episodeDisplayTitle(e);
+                      const epCw = mid ? findContinueWatching(mid, num) : undefined;
+                      const pct =
+                        epCw && epCw.duration > 0
+                          ? Math.min(100, (epCw.position / epCw.duration) * 100)
+                          : 0;
+                      const isCurrent = ep != null && num === ep;
+                      return (
+                        <div
+                          key={num}
+                          onClick={() => {
+                            if (link) {
+                              window.location.assign(
+                                buildStreamUrl(link, {
+                                  id: mid,
+                                  title: overlayTitle,
+                                  poster,
+                                  ep: num,
+                                }),
+                              );
+                            }
+                          }}
+                          className={`flex items-center gap-4 border-t border-white/10 px-2 py-3.5 ${
+                            link ? "cursor-pointer transition hover:bg-white/5" : "opacity-50"
+                          } ${isCurrent ? "bg-[#06B6D4]/5" : ""}`}
+                        >
+                          <span
+                            className={`w-8 flex-none text-center text-xl ${
+                              isCurrent ? "font-bold text-[#06B6D4]" : "text-slate-200"
+                            }`}
+                          >
+                            {num}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-semibold text-white">
+                              {extra || `Episode ${num}`}
+                            </div>
+                            {pct > 0 && (
+                              <div className="mt-1.5 h-[3px] w-44 max-w-full rounded bg-[#404040]">
+                                <div
+                                  className="h-full rounded bg-[#06B6D4]"
+                                  style={{ width: `${pct}%` }}
+                                />
+                              </div>
+                            )}
+                          </div>
+                          {isCurrent ? (
+                            <span className="flex-none text-[10px] font-bold uppercase tracking-wider text-[#06B6D4]">
+                              Now Playing
+                            </span>
+                          ) : (
+                            <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full border border-white/30 text-white">
+                              <Play size={14} fill="currentColor" />
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
+              {/* MORE LIKE THIS — bottom row */}
+              {related.length > 0 && (
+                <section className="animate-fade-up">
+                  <h2 className="mb-3 text-lg font-bold text-white">More Like This</h2>
+                  <div className="no-scrollbar -mx-1 flex gap-2.5 overflow-x-auto px-1 pb-1">
+                    {related.map((m) => (
+                      <WatchRelatedCard key={String(m.id)} movie={m} />
+                    ))}
+                  </div>
+                </section>
+              )}
 
               {/* NEXT EPISODE */}
               {nextEp && (

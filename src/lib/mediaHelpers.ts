@@ -46,14 +46,43 @@ export function validQualities(movie?: Partial<Movie> | null): QualityLink[] {
   ).map((q) => ({ label: q.label, url: (movie as Record<string, unknown>)[q.field] as string }));
 }
 
-/** Best playable quality for Watch Now: 720p preferred, then 1080p, 480p, 4K. */
-export function pickBestQualityLink(movie?: Partial<Movie> | null): QualityLink | null {
-  const vq = validQualities(movie);
-  for (const pref of ["720p", "1080p", "480p", "4K"]) {
-    const hit = vq.find((q) => q.label === pref);
-    if (hit) return hit;
+/* ---------------- Playability-first host ranking ----------------
+ * The catalog mixes source hosts. The bypass engine reliably extracts
+ * mdrive-family pages (verified live), while direct hubcloud pages
+ * frequently block extraction behind Cloudflare — so source selection
+ * ranks PLAYABLE hosts first and quality second: a title with any
+ * mdrive link plays from mdrive even at a lower quality, instead of
+ * dead-ending on a blocked hubcloud link at a higher one. */
+export function linkHostTier(url?: string | null): number {
+  if (!url) return 0;
+  let host = "";
+  try {
+    host = new URL(String(url)).hostname.toLowerCase();
+  } catch {
+    return 0;
   }
-  return null;
+  if (host.includes("mdrive")) return 3; // verified playable today
+  if (host.includes("hubcloud") || host.includes("hubcdn")) return 1; // known blocker
+  return 2; // other hosts: generic extraction may work
+}
+
+const QUALITY_PREF = ["720p", "1080p", "480p", "4K"];
+
+/** Sort quality links playable-host first, then by quality preference
+ *  (720p → 1080p → 480p → 4K, the site's long-standing order). */
+export function rankQualityLinks(links: QualityLink[]): QualityLink[] {
+  return [...links].sort((a, b) => {
+    const tierDiff = linkHostTier(b.url) - linkHostTier(a.url);
+    if (tierDiff !== 0) return tierDiff;
+    return QUALITY_PREF.indexOf(a.label) - QUALITY_PREF.indexOf(b.label);
+  });
+}
+
+/** Best playable link for Watch Now: playable host first, then quality
+ *  (720p preferred, then 1080p, 480p, 4K). */
+export function pickBestQualityLink(movie?: Partial<Movie> | null): QualityLink | null {
+  const ranked = rankQualityLinks(validQualities(movie));
+  return ranked.length ? ranked[0] : null;
 }
 
 /* ---------------- Episodes ----------------
@@ -98,13 +127,11 @@ export function episodeDisplayTitle(ep: RawEpisode): string {
   return t;
 }
 
-/** Best valid link for one episode (720p preferred), or null. */
+/** Best valid link for one episode: playable host first, then quality
+ *  (720p preferred), or null. */
 export function episodeBestLink(ep: RawEpisode): string | null {
-  for (const f of ["link_720p", "link_1080p", "link_480p", "link_4k"]) {
-    const u = ep?.[f];
-    if (isValidStreamTarget(u)) return u as string;
-  }
-  return null;
+  const links = episodeQualityLinks(ep);
+  return links.length ? links[0].url : null;
 }
 
 /** The stream a catalog card should open in Stream Mode: the title's best
@@ -123,10 +150,42 @@ export function pickCardStream(
   return null;
 }
 
-/** The valid per-quality links of one episode, in display order. */
+/** The valid per-quality links of one episode, ranked playable-host
+ *  first, then by quality preference. */
 export function episodeQualityLinks(ep: RawEpisode): QualityLink[] {
-  return QUALITY_FIELDS.filter((q) => isValidStreamTarget(ep?.[q.field])).map((q) => ({
-    label: q.label,
-    url: ep[q.field] as string,
-  }));
+  return rankQualityLinks(
+    QUALITY_FIELDS.filter((q) => isValidStreamTarget(ep?.[q.field])).map((q) => ({
+      label: q.label,
+      url: ep[q.field] as string,
+    })),
+  );
+}
+
+/** Alternate source candidates for the player's fallback chain: every
+ *  other valid link for the same title (and episode, for series),
+ *  ranked playable-host first, excluding the URL already tried. */
+export function alternateStreamCandidates(
+  movie: Partial<Movie> | null | undefined,
+  ep: number | null | undefined,
+  excludeUrl: string,
+  max = 4,
+): string[] {
+  if (!movie) return [];
+  const seen = new Set<string>([excludeUrl]);
+  const out: string[] = [];
+  const push = (url?: string | null) => {
+    if (url && !seen.has(url)) {
+      seen.add(url);
+      out.push(url);
+    }
+  };
+  if (ep != null) {
+    const episodes = parseEpisodes(movie);
+    const idx = episodes.findIndex((e, i) => episodeNumber(e, i) === ep);
+    if (idx >= 0) {
+      for (const q of episodeQualityLinks(episodes[idx])) push(q.url);
+    }
+  }
+  for (const q of rankQualityLinks(validQualities(movie))) push(q.url);
+  return out.slice(0, max);
 }

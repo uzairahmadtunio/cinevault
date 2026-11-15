@@ -205,6 +205,7 @@ const NAV_GENRE = ["Action", "Romance", "Horror", "Comedy", "Drama", "Thriller",
 
 export function Navbar({ onOpenSearch }: { onOpenSearch: () => void }) {
   const [drawer, setDrawer] = useState(false);
+  const { mode } = useSiteMode();
   return (
     <>
       <header
@@ -217,20 +218,32 @@ export function Navbar({ onOpenSearch }: { onOpenSearch: () => void }) {
           <span className="text-white">Cine</span><span className="text-[#06B6D4]">Vault</span>
         </Link>
         <nav className="hidden md:flex items-center gap-1 ml-8 text-sm">
-          <NavDrop label="OTT" items={NAV_OTT} />
-          <NavDrop label="Movies" items={NAV_MOVIES} />
-          <NavLink to="/" search={{ view: "catalog", type: "series", page: 1 }}>Web-Series</NavLink>
-          <NavDrop label="Genre" items={NAV_GENRE} />
-          <NavLink to="/" search={{ view: "catalog", category: "anime", page: 1 }}>Anime</NavLink>
-          <NavLink to="/" search={{ view: "catalog", category: "4k", page: 1 }}>4K</NavLink>
-          <NavLink to="/" search={{ view: "catalog", category: "kdrama", page: 1 }}>K-Drama</NavLink>
-          {/* Age-restricted Adult++ category */}
-          <NavAdultLink to="/" search={{ view: "catalog", category: "adult", page: 1 }}>
-            <span className="flex items-center gap-1">
-              <span className="text-[11px]">🔞</span>
-              <span>Adult++</span>
-            </span>
-          </NavAdultLink>
+          {mode === "stream" ? (
+            <>
+              <NavLink to="/">Home</NavLink>
+              <NavLink to="/movies">Movies</NavLink>
+              <NavLink to="/series">Web Series</NavLink>
+              <NavLink to="/movies/anime">Anime</NavLink>
+              <NavLink to="/my-list">My List</NavLink>
+            </>
+          ) : (
+            <>
+              <NavDrop label="OTT" items={NAV_OTT} />
+              <NavDrop label="Movies" items={NAV_MOVIES} />
+              <NavLink to="/" search={{ view: "catalog", type: "series", page: 1 }}>Web-Series</NavLink>
+              <NavDrop label="Genre" items={NAV_GENRE} />
+              <NavLink to="/" search={{ view: "catalog", category: "anime", page: 1 }}>Anime</NavLink>
+              <NavLink to="/" search={{ view: "catalog", category: "4k", page: 1 }}>4K</NavLink>
+              <NavLink to="/" search={{ view: "catalog", category: "kdrama", page: 1 }}>K-Drama</NavLink>
+              {/* Age-restricted Adult++ category */}
+              <NavAdultLink to="/" search={{ view: "catalog", category: "adult", page: 1 }}>
+                <span className="flex items-center gap-1">
+                  <span className="text-[11px]">🔞</span>
+                  <span>Adult++</span>
+                </span>
+              </NavAdultLink>
+            </>
+          )}
         </nav>
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           <ModeToggle />
@@ -246,25 +259,37 @@ export function Navbar({ onOpenSearch }: { onOpenSearch: () => void }) {
               <span className="font-bold"><span className="text-white">Cine</span><span className="text-[#06B6D4]">Vault</span></span>
               <button onClick={() => setDrawer(false)}><X size={20} /></button>
             </div>
-            <DrawerGroup title="OTT" items={NAV_OTT} category="ott" />
-            <DrawerGroup title="Movies" items={NAV_MOVIES} category="movies" />
-            <DrawerGroup title="Genre" items={NAV_GENRE} category="genre" />
-            <div className="mt-4 space-y-2 text-sm">
-              <Link to="/" search={{ view: "catalog", type: "series", page: 1 }} className="block text-[#F1F5F9] hover:text-[#06B6D4]">Web-Series</Link>
-              <Link to="/" search={{ view: "catalog", category: "anime", page: 1 }} className="block text-[#F1F5F9] hover:text-[#06B6D4]">Anime</Link>
-              <Link to="/" search={{ view: "catalog", category: "4k", page: 1 }} className="block text-[#F1F5F9] hover:text-[#06B6D4]">4K</Link>
-              <Link to="/" search={{ view: "catalog", category: "kdrama", page: 1 }} className="block text-[#F1F5F9] hover:text-[#06B6D4]">K-Drama</Link>
-              {/* Age-restricted Adult++ category - mobile drawer */}
-              <Link
-                to="/"
-                search={{ view: "catalog", category: "adult", page: 1 } as any}
-                className="flex items-center gap-1.5 text-rose-400 hover:text-rose-300 font-semibold"
-              >
-                <span>🔞</span>
-                <span>Adult++</span>
-                <span className="text-[9px] bg-rose-900/40 border border-rose-500/40 text-rose-400 px-1.5 py-0.5 rounded-full font-bold tracking-wide">18+</span>
-              </Link>
-            </div>
+            {mode === "stream" ? (
+              <div className="space-y-2 text-sm">
+                <Link to="/" onClick={() => setDrawer(false)} className="block text-[#F1F5F9] hover:text-[#06B6D4]">Home</Link>
+                <Link to="/movies" onClick={() => setDrawer(false)} className="block text-[#F1F5F9] hover:text-[#06B6D4]">Movies</Link>
+                <Link to="/series" onClick={() => setDrawer(false)} className="block text-[#F1F5F9] hover:text-[#06B6D4]">Web Series</Link>
+                <Link to="/movies/anime" onClick={() => setDrawer(false)} className="block text-[#F1F5F9] hover:text-[#06B6D4]">Anime</Link>
+                <Link to="/my-list" onClick={() => setDrawer(false)} className="block text-[#F1F5F9] hover:text-[#06B6D4]">My List</Link>
+              </div>
+            ) : (
+              <>
+                <DrawerGroup title="OTT" items={NAV_OTT} category="ott" />
+                <DrawerGroup title="Movies" items={NAV_MOVIES} category="movies" />
+                <DrawerGroup title="Genre" items={NAV_GENRE} category="genre" />
+                <div className="mt-4 space-y-2 text-sm">
+                  <Link to="/" search={{ view: "catalog", type: "series", page: 1 }} className="block text-[#F1F5F9] hover:text-[#06B6D4]">Web-Series</Link>
+                  <Link to="/" search={{ view: "catalog", category: "anime", page: 1 }} className="block text-[#F1F5F9] hover:text-[#06B6D4]">Anime</Link>
+                  <Link to="/" search={{ view: "catalog", category: "4k", page: 1 }} className="block text-[#F1F5F9] hover:text-[#06B6D4]">4K</Link>
+                  <Link to="/" search={{ view: "catalog", category: "kdrama", page: 1 }} className="block text-[#F1F5F9] hover:text-[#06B6D4]">K-Drama</Link>
+                  {/* Age-restricted Adult++ category - mobile drawer */}
+                  <Link
+                    to="/"
+                    search={{ view: "catalog", category: "adult", page: 1 } as any}
+                    className="flex items-center gap-1.5 text-rose-400 hover:text-rose-300 font-semibold"
+                  >
+                    <span>🔞</span>
+                    <span>Adult++</span>
+                    <span className="text-[9px] bg-rose-900/40 border border-rose-500/40 text-rose-400 px-1.5 py-0.5 rounded-full font-bold tracking-wide">18+</span>
+                  </Link>
+                </div>
+              </>
+            )}
           </aside>
         </div>
       )}
