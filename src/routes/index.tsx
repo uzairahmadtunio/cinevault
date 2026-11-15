@@ -2,11 +2,14 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   SiteShell, HeroSlider, NoticeBanner, TrendingSection,
-  MovieGrid, FALLBACK_MOVIES, type Movie,
+  MovieGrid, FALLBACK_MOVIES, titlePosterDataUrl, type Movie,
 } from "@/components/cinevault";
 import { SkeletonLoader } from "@/components/SkeletonLoader";
 import { fetchMoviesPaginated, getFilterCounts, fetchTrendingOrTopRated } from "@/lib/api/server.movies";
-import { ChevronLeft, ChevronRight, Search as SearchIcon, AlertCircle, SlidersHorizontal, X, Sparkles, Zap, Clapperboard, Globe, Film, Shield, Bookmark, TrendingUp } from "lucide-react";
+import { useSiteMode } from "@/lib/siteMode";
+import { fuzzyFind, getSearchIndex, normalizeForSearch, type SearchIndexItem } from "@/lib/searchIndex";
+import { continueWatchingUrl, loadContinueWatching, removeContinueWatching, type CWEntry } from "@/lib/continueWatching";
+import { ChevronLeft, ChevronRight, Search as SearchIcon, AlertCircle, SlidersHorizontal, X, Sparkles, Zap, Clapperboard, Globe, Film, Shield, Bookmark, TrendingUp, Play } from "lucide-react";
 import { CURRENT_MIRROR_INDEX, BASE_DOMAIN, getActiveCatalogUrl, getCrossDomainCatalogUrl, isMirrorHostname } from "@/lib/utils/domainConfig";
 
 export const Route = createFileRoute("/")({
@@ -80,7 +83,7 @@ function PremiumLandingPage({ }: PremiumLandingPageProps) {
     {
       icon: Film,
       title: "Comprehensive Movie Database",
-      description: "3,100+ titles across all genres and platforms",
+      description: "7,000+ titles across all genres and platforms",
     },
     {
       icon: Globe,
@@ -264,7 +267,7 @@ function PremiumLandingPage({ }: PremiumLandingPageProps) {
         <div className="grid grid-cols-3 gap-8 text-center mb-20 border-t border-slate-700 pt-12">
           <div>
             <p className="text-4xl md:text-5xl font-black" style={{ color: "#06B6D4" }}>
-              3100+
+              7000+
             </p>
             <p className="text-xs text-slate-500 mt-3 uppercase tracking-wider">Titles Available</p>
           </div>
@@ -401,9 +404,17 @@ function Home() {
   const [movies, setMovies] = useState<Movie[]>([]);
   const [total, setTotal] = useState(0);
   const [counts, setCounts] = useState<Record<string, number>>({});
+  const [countsLoaded, setCountsLoaded] = useState(false);
   const [trending, setTrending] = useState<Movie[]>([]);
-  const [loading, setLoading] = useState(false);
+  // Start in the loading state: the first paint must show skeletons, never a
+  // false "No titles matched" empty state while the catalog request is flying.
+  const [loading, setLoading] = useState(true);
   const [trendingLoading, setTrendingLoading] = useState(true);
+
+  const { mode } = useSiteMode();
+  const [cwEntries, setCwEntries] = useState<CWEntry[]>([]);
+  const [searchIdx, setSearchIdx] = useState<SearchIndexItem[]>([]);
+  const [suggestOpen, setSuggestOpen] = useState(false);
   
   const [searchInput, setSearchInput] = useState(search || "");
   const [isFilterOpen, setIsFilterOpen] = useState(false);
@@ -444,8 +455,30 @@ function Home() {
     (async () => {
       const res = await getFilterCounts({ data: {} });
       setCounts(res);
+      setCountsLoaded(true);
     })();
   }, []);
+
+  // Continue Watching entries (localStorage) + the smart-search title index
+  // (fetched once, cached) — both are client-only niceties, loaded on mount.
+  useEffect(() => {
+    setCwEntries(loadContinueWatching());
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSearchIndex().then((items) => {
+      if (!cancelled) setSearchIdx(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const removeCw = (e: CWEntry) => {
+    removeContinueWatching(e.id, e.ep);
+    setCwEntries(loadContinueWatching());
+  };
 
   useEffect(() => {
     setSearchInput(search || "");
@@ -631,6 +664,29 @@ function Home() {
   const activeFilter = getActiveTab();
   const activeSort = sortBy || "latest";
 
+  // Hero + Trending are discovery furniture for the default view only — while
+  // a search or filter is active they ignore it, which confuses users, so
+  // they are hidden until the view is reset.
+  const filtersActive = Boolean(search || category || platform || type || genres || years);
+
+  // Live suggestions for the catalog search box (local fuzzy index, no network).
+  const suggestions = useMemo(() => {
+    if (!suggestOpen || !searchInput.trim() || !searchIdx.length) return [];
+    return fuzzyFind(searchIdx, searchInput, 8);
+  }, [suggestOpen, searchInput, searchIdx]);
+
+  // "Did you mean": a submitted search with (almost) no results, but a close
+  // title exists in the catalog — offer the corrected search, YouTube-style.
+  const didYouMean = useMemo(() => {
+    if (!search || loading || movies.length > 2 || !searchIdx.length) return null;
+    const top = fuzzyFind(searchIdx, search, 3)[0];
+    if (!top) return null;
+    if (movies.some((m) => String(m.id) === top.item.id)) return null;
+    const candidate = top.item.display;
+    if (!candidate || normalizeForSearch(candidate) === normalizeForSearch(search)) return null;
+    return candidate;
+  }, [search, loading, movies, searchIdx]);
+
   // ============================================================================
   // CONDITIONAL RENDERING (no early return - JSX level only)
   // ============================================================================
@@ -642,9 +698,15 @@ function Home() {
 
   return (
     <SiteShell>
-      <HeroSlider />
+      {!filtersActive && <HeroSlider />}
       <NoticeBanner />
-      <TrendingSection movies={trending} loading={trendingLoading} />
+      {mode === "stream" && cwEntries.length > 0 && (
+        <ContinueWatchingRow entries={cwEntries} onRemove={removeCw} />
+      )}
+      {!filtersActive && <TrendingSection movies={trending} loading={trendingLoading} />}
+      {mode === "download" && cwEntries.length > 0 && (
+        <ContinueWatchingRow entries={cwEntries} onRemove={removeCw} />
+      )}
       
       <section id="catalog-grid-anchor" className="py-8 px-4 md:px-8 max-w-7xl mx-auto">
         
@@ -655,7 +717,7 @@ function Home() {
               🎬 Latest Releases
             </h1>
             <p className="text-[#64748B] text-sm font-medium">
-              {total > 0 ? `Showing ${start}-${end} of ${total} titles` : "No titles matched"}
+              {loading ? "Loading titles…" : total > 0 ? `Showing ${start}-${end} of ${total} titles` : "No titles matched"}
             </p>
           </div>
 
@@ -695,9 +757,46 @@ function Home() {
                 type="text"
                 placeholder="Search catalog by movie title, series name..."
                 value={searchInput}
-                onChange={(e) => handleSearch(e.target.value)}
+                onChange={(e) => {
+                  handleSearch(e.target.value);
+                  setSuggestOpen(true);
+                }}
+                onFocus={() => setSuggestOpen(true)}
+                onBlur={() => setTimeout(() => setSuggestOpen(false), 150)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") setSuggestOpen(false);
+                }}
                 className="w-full pl-11 pr-4 py-3.5 rounded-xl bg-[#0D1321] border border-[rgba(14,165,233,0.15)] text-[#F1F5F9] placeholder-[#64748B] focus:border-[#06B6D4] focus:outline-none text-sm transition shadow-inner focus:shadow-[0_0_20px_rgba(6,182,212,0.1)]"
               />
+              {/* Live suggestions (typo-tolerant, from the local title index) */}
+              {suggestions.length > 0 && (
+                <div className="absolute left-0 right-0 top-full mt-2 z-40 rounded-xl bg-[#111827] border border-[rgba(14,165,233,0.25)] shadow-2xl overflow-hidden">
+                  {suggestions.map((h) => (
+                    <button
+                      key={h.item.id}
+                      type="button"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setSuggestOpen(false);
+                        navigate({ to: "/movie/$id", params: { id: h.item.id } });
+                      }}
+                      className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[rgba(14,165,233,0.12)] transition"
+                    >
+                      {h.item.thumbnail ? (
+                        <img src={h.item.thumbnail} alt="" className="w-8 h-11 object-cover rounded shrink-0" loading="lazy" />
+                      ) : (
+                        <span className="w-8 h-11 rounded bg-[#0D1321] flex items-center justify-center text-[#06B6D4] shrink-0">
+                          <Film size={14} />
+                        </span>
+                      )}
+                      <span className="min-w-0">
+                        <span className="block text-sm font-semibold text-[#F1F5F9] truncate">{h.item.display}</span>
+                        {h.item.year ? <span className="block text-[11px] text-[#64748B]">{h.item.year}</span> : null}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
             
             {/* Slide-Over Toggle Button */}
@@ -740,13 +839,32 @@ function Home() {
                         : "bg-[#111827] text-[#64748B] border border-[rgba(14,165,233,0.15)] hover:bg-gray-800/60 hover:text-white hover:border-gray-700/50 transition-all duration-200 cursor-pointer"
                     }`}
                   >
-                    {tab.label} <span className="text-[10px] opacity-75">({count})</span>
+                    {tab.label} {countsLoaded && <span className="text-[10px] opacity-75">({count})</span>}
                   </button>
                 );
               })}
             </div>
           </div>
         </div>
+
+        {/* DID YOU MEAN */}
+        {didYouMean && (
+          <div className="mb-6 flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-[rgba(14,165,233,0.25)] bg-[#0D1321] px-4 py-3 text-sm">
+            <span className="text-[#94A3B8]">Did you mean:</span>
+            <button
+              onClick={() =>
+                navigate({
+                  to: "/",
+                  search: (prev) => ({ ...prev, view: "catalog", page: 1, search: didYouMean }),
+                })
+              }
+              className="font-bold text-[#06B6D4] hover:underline cursor-pointer"
+            >
+              {didYouMean}
+            </button>
+            <span className="text-[#94A3B8]">?</span>
+          </div>
+        )}
 
         {/* FULL-WIDTH CARD CATALOG GRID */}
         <div className="w-full space-y-8">
@@ -1010,5 +1128,55 @@ function Home() {
       </div>
 
     </SiteShell>
+  );
+}
+
+
+/* ---------------- Continue Watching (localStorage-backed) ---------------- */
+function ContinueWatchingRow({ entries, onRemove }: { entries: CWEntry[]; onRemove: (e: CWEntry) => void }) {
+  return (
+    <section className="px-4 md:px-8 py-6 max-w-7xl mx-auto">
+      <h2 className="text-xl md:text-2xl font-bold mb-4 text-[#F1F5F9]">▶ Continue Watching</h2>
+      <div className="flex gap-4 overflow-x-auto no-scrollbar pb-2">
+        {entries.map((e) => {
+          const pct = e.duration > 0 ? Math.min(100, Math.max(0, (e.position / e.duration) * 100)) : 0;
+          return (
+            <div key={`${e.id}:${e.ep ?? ""}`} className="relative shrink-0 w-[150px] sm:w-[180px] group">
+              <a href={continueWatchingUrl(e)} className="block">
+                <div className="relative aspect-[2/3] rounded-lg overflow-hidden border border-[rgba(14,165,233,0.2)] bg-[#111827]">
+                  <img
+                    src={e.poster || titlePosterDataUrl(e.title)}
+                    alt={e.title}
+                    className="w-full h-full object-cover"
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition">
+                    <span className="w-11 h-11 rounded-full bg-[#06B6D4]/90 flex items-center justify-center text-white">
+                      <Play size={18} fill="currentColor" className="ml-0.5" />
+                    </span>
+                  </div>
+                  <div className="absolute bottom-0 inset-x-0 h-1.5 bg-white/20">
+                    <div className="h-full bg-[#06B6D4]" style={{ width: `${pct}%` }} />
+                  </div>
+                </div>
+                <p className="mt-2 text-xs font-semibold text-[#F1F5F9] line-clamp-2">
+                  {e.title}
+                  {e.ep != null ? ` · Episode ${e.ep}` : ""}
+                </p>
+              </a>
+              <button
+                type="button"
+                aria-label="Remove from Continue Watching"
+                title="Remove"
+                onClick={() => onRemove(e)}
+                className="absolute top-1.5 right-1.5 z-10 w-6 h-6 rounded-full bg-black/70 border border-white/25 text-white hidden group-hover:flex items-center justify-center hover:bg-black/90"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </section>
   );
 }

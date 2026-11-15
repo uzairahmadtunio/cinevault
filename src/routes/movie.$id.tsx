@@ -1,29 +1,37 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { Star, Download } from "lucide-react";
-import { SiteShell, MovieCard, showToast, cleanTitle, titlePosterDataUrl, type Movie, type EpisodeLink } from "@/components/cinevault";
+import { Star, Download, Play, MoreVertical } from "lucide-react";
+import { SiteShell, MovieCard, cleanTitle, titlePosterDataUrl, type Movie } from "@/components/cinevault";
 import { fetchMovieById, fetchMovies } from "@/lib/api/server.movies";
-import { getBypassedUrl } from "@/utils/linkBypasser";
+import { buildStreamUrl } from "@/utils/linkBypasser";
+import {
+  cleanFileSize, episodeDisplayTitle, episodeNumber, episodeQualityLinks,
+  parseEpisodes, pickBestQualityLink, validQualities, validRating,
+} from "@/lib/mediaHelpers";
+import { useSiteMode } from "@/lib/siteMode";
 
 export const Route = createFileRoute("/movie/$id")({
   component: MovieDetail,
 });
 
-const SIZE_EST: Record<string, string> = {
-  "480p": "~400-700 MB",
-  "720p": "~1-1.5 GB",
-  "1080p": "~2-4 GB",
-  "4K": "~6-15 GB",
-};
+function qualityBtnColor(label: string): string {
+  switch (label) {
+    case "720p": return "#2563EB";
+    case "1080p": return "#059669";
+    case "4K": return "#0EA5E9";
+    default: return "#374151";
+  }
+}
 
 function MovieDetail() {
   const { id } = Route.useParams();
-  const navigate = useNavigate();
+  const { mode } = useSiteMode();
   const [movie, setMovie] = useState<Movie | null>(null);
   const [related, setRelated] = useState<Movie[]>([]);
   const relatedRef = useRef<HTMLDivElement | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [dlMenuOpen, setDlMenuOpen] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -83,22 +91,22 @@ function MovieDetail() {
     );
   }
 
-  const tryLink = (url: string | null | undefined, label: string) => {
-    if (url) {
-      const bypassed = getBypassedUrl(url);
-      window.open(bypassed, "_blank", "noopener");
-    } else {
-      showToast(`Join Telegram for ${label} links!`);
-    }
-  };
+  const posterSrc =
+    movie.thumbnail && movie.thumbnail.trim() !== "" && movie.thumbnail !== "N/A" && movie.thumbnail !== "null"
+      ? movie.thumbnail
+      : null;
 
-  const handleMovieDownload = (quality: string) => {
-    if (movie) {
-      navigate({
-        to: "/download/$movieId/$quality",
-        params: { movieId: String(movie.id), quality },
-      });
-    }
+  // Every watch/download action goes straight to the in-site player (which
+  // carries the real Download button) — no intermediate "Generate" page.
+  const goToPlayer = (url: string, epNum?: number) => {
+    window.location.assign(
+      buildStreamUrl(url, {
+        id: movie.id,
+        title: cleanTitle(movie.title),
+        poster: posterSrc,
+        ep: epNum ?? null,
+      }),
+    );
   };
 
   // Gather screenshots from screenshot_1..10 + screenshots jsonb array
@@ -122,12 +130,10 @@ function MovieDetail() {
   );
 
   const isSeries = (movie.type || "").toLowerCase() === "series";
-  const episodes: EpisodeLink[] = Array.isArray(movie.episode_links)
-    ? movie.episode_links
-    : (() => {
-        try { return movie.episode_links ? JSON.parse(movie.episode_links as unknown as string) : []; }
-        catch { return []; }
-      })();
+  const episodes = parseEpisodes(movie);
+  const qualities = validQualities(movie);
+  const bestLink = pickBestQualityLink(movie);
+  const rating = validRating(movie.imdb_rating);
 
   const leftRows: Array<[string, React.ReactNode]> = [];
   leftRows.push(["🎬 Name", cleanTitle(movie.title)]);
@@ -146,14 +152,15 @@ function MovieDetail() {
     );
     leftRows.push(["🎭 Genre", genreChips]);
   }
-  if (!isSeries && movie.duration) leftRows.push(["⏱️ Duration", movie.duration]);
+  if (movie.duration) leftRows.push(["⏱️ Duration", movie.duration]);
   if (isSeries && movie.season_number) leftRows.push(["📺 Season", movie.season_number]);
   if (movie.quality) leftRows.push(["📀 Quality", movie.quality]);
   if (movie.format) leftRows.push(["🎬 Format", movie.format]);
-  if (movie.file_size) leftRows.push(["💾 File Size", movie.file_size]);
+  const cleanedSize = cleanFileSize(movie.file_size);
+  if (cleanedSize) leftRows.push(["💾 File Size", cleanedSize]);
 
   const rightRows: Array<[string, React.ReactNode]> = [];
-  if (movie.imdb_rating != null) rightRows.push(["⭐ IMDb", <span className="text-yellow-400">{Number(movie.imdb_rating).toFixed(1)}/10</span>]);
+  if (rating != null) rightRows.push(["⭐ IMDb", <span className="text-yellow-400">{rating.toFixed(1)}/10</span>]);
   if (movie.director) {
     const directors = movie.director.split(",").map(d => d.trim()).filter(Boolean).join(", ");
     rightRows.push(["🎥 Director", <span className="text-[#06B6D4]">{directors}</span>]);
@@ -172,21 +179,31 @@ function MovieDetail() {
         <div className="absolute inset-0" style={{ background: "linear-gradient(to top, #080C14 0%, rgba(8,12,20,0.3) 60%, rgba(14,165,233,0.25) 100%)" }} />
       </div>
       <div className="max-w-5xl mx-auto px-4 md:px-8 -mt-16 relative z-10">
-        <h1 className="text-3xl md:text-5xl font-extrabold text-white drop-shadow">{cleanTitle(movie.title)}</h1>
-        <div className="flex flex-wrap items-center gap-2 mt-3 text-xs">
-          {movie.year && <Chip>{movie.year}</Chip>}
-          {movie.language && <Chip>{movie.language}</Chip>}
-          {movie.quality && <Chip>{movie.quality}</Chip>}
-          {movie.format && <Chip>{movie.format}</Chip>}
-          {isSeries && <Chip>📺 Series</Chip>}
-          {movie.imdb_rating != null && (
-            <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded font-semibold">
-              <Star size={12} fill="currentColor" /> {Number(movie.imdb_rating).toFixed(1)}
-            </span>
-          )}
-          {movie.platform && (
-            <span className="px-2 py-1 rounded text-white font-semibold" style={{ background: platformColor(movie.platform) }}>{movie.platform}</span>
-          )}
+        <div className="flex items-end gap-4 sm:gap-5">
+          {/* Poster thumbnail in the header (previously banner-only) */}
+          <img
+            src={posterSrc || titlePosterDataUrl(movie.title)}
+            alt={cleanTitle(movie.title)}
+            className="hidden sm:block w-28 md:w-36 aspect-[2/3] object-cover rounded-lg border border-[rgba(14,165,233,0.35)] shadow-[0_10px_30px_rgba(0,0,0,0.6)] shrink-0 bg-[#0D1321]"
+          />
+          <div className="min-w-0 flex-1">
+            <h1 className="text-3xl md:text-5xl font-extrabold text-white drop-shadow">{cleanTitle(movie.title)}</h1>
+            <div className="flex flex-wrap items-center gap-2 mt-3 text-xs">
+              {movie.year && <Chip>{movie.year}</Chip>}
+              {movie.language && <Chip>{movie.language}</Chip>}
+              {movie.quality && <Chip>{movie.quality}</Chip>}
+              {movie.format && <Chip>{movie.format}</Chip>}
+              {isSeries && <Chip>📺 Series</Chip>}
+              {rating != null && (
+                <span className="inline-flex items-center gap-1 px-2 py-1 bg-yellow-500/20 text-yellow-400 rounded font-semibold">
+                  <Star size={12} fill="currentColor" /> {rating.toFixed(1)}
+                </span>
+              )}
+              {movie.platform && (
+                <span className="px-2 py-1 rounded text-white font-semibold" style={{ background: platformColor(movie.platform) }}>{movie.platform}</span>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* INFO CARD */}
@@ -218,33 +235,96 @@ function MovieDetail() {
             </h2>
             <div className="space-y-3">
               {episodes.length === 0 && <p className="text-[#64748B] text-sm">No episodes added yet.</p>}
-              {episodes.map((ep) => (
-                <div
-                  key={ep.episode}
-                  className="rounded-lg p-4"
-                  style={{ background: "#0D1321", borderLeft: "3px solid #06B6D4" }}
+              {episodes.map((ep, i) => {
+                const num = episodeNumber(ep, i);
+                const dTitle = episodeDisplayTitle(ep);
+                const links = episodeQualityLinks(ep);
+                return (
+                  <div
+                    key={i}
+                    className="rounded-lg p-4"
+                    style={{ background: "#0D1321", borderLeft: "3px solid #06B6D4" }}
+                  >
+                    <div className="font-semibold text-[#F1F5F9] mb-3">
+                      Episode {String(num).padStart(2, "0")}{dTitle ? ` — ${dTitle}` : ""}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {links.length > 0 ? (
+                        links.map((l) => (
+                          <DBtn key={l.label} onClick={() => goToPlayer(l.url, num)} bg={qualityBtnColor(l.label)}>
+                            {l.label}
+                          </DBtn>
+                        ))
+                      ) : (
+                        <span className="text-xs text-[#64748B]">Links coming soon</span>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        ) : mode === "stream" ? (
+          <>
+            <h2 className="mt-8 mb-3 text-lg font-bold text-[#F1F5F9]">Watch</h2>
+            <div className="flex flex-wrap items-center gap-3">
+              {bestLink ? (
+                <button
+                  onClick={() => goToPlayer(bestLink.url)}
+                  className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg bg-[#06B6D4] hover:bg-[#0891B2] text-white font-bold text-base shadow-[0_0_25px_rgba(6,182,212,0.35)] transition hover:scale-[1.02] cursor-pointer"
                 >
-                  <div className="font-semibold text-[#F1F5F9] mb-3">
-                    Episode {String(ep.episode).padStart(2, "0")}{ep.title ? ` — ${ep.title}` : ""}
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    <DBtn onClick={() => tryLink(ep.link_480p, `Ep${ep.episode} 480p`)} bg="#374151">480p</DBtn>
-                    <DBtn onClick={() => tryLink(ep.link_720p, `Ep${ep.episode} 720p`)} bg="#2563EB">720p</DBtn>
-                    <DBtn onClick={() => tryLink(ep.link_1080p, `Ep${ep.episode} 1080p`)} bg="#059669">1080p</DBtn>
-                  </div>
+                  <Play size={20} fill="currentColor" /> Watch Now
+                </button>
+              ) : (
+                <p className="text-sm text-[#64748B]">Streaming links for this title are being updated — please check back soon.</p>
+              )}
+              {qualities.length > 0 && (
+                <div className="relative">
+                  <button
+                    onClick={() => setDlMenuOpen((v) => !v)}
+                    className="inline-flex items-center gap-1.5 px-4 py-3 rounded-lg border border-[rgba(14,165,233,0.35)] text-[#F1F5F9] font-semibold text-sm hover:bg-[rgba(14,165,233,0.1)] cursor-pointer"
+                    aria-label="Download options"
+                  >
+                    <MoreVertical size={18} /> Download
+                  </button>
+                  {dlMenuOpen && (
+                    <>
+                      <div className="fixed inset-0 z-30" onClick={() => setDlMenuOpen(false)} />
+                      <div className="absolute left-0 top-full mt-2 z-40 w-56 rounded-lg bg-[#111827] border border-[rgba(14,165,233,0.25)] shadow-2xl py-2">
+                        {qualities.map((q) => (
+                          <button
+                            key={q.label}
+                            onClick={() => {
+                              setDlMenuOpen(false);
+                              goToPlayer(q.url);
+                            }}
+                            className="w-full flex items-center gap-2 px-4 py-2 text-sm text-[#F1F5F9] hover:bg-[rgba(14,165,233,0.12)] text-left cursor-pointer"
+                          >
+                            <Download size={14} className="text-[#06B6D4]" /> Download {q.label}
+                          </button>
+                        ))}
+                        <p className="px-4 pt-2 text-[10px] text-[#64748B]">Opens the player page — the download button is there.</p>
+                      </div>
+                    </>
+                  )}
                 </div>
-              ))}
+              )}
             </div>
           </>
         ) : (
           <>
             <h2 className="mt-8 mb-3 text-lg font-bold text-[#F1F5F9]">Download Links</h2>
-            <div className="flex flex-wrap gap-4">
-              <DownloadBlock label="480p" bg="#374151" size={movie.file_size || SIZE_EST["480p"]} onClick={() => handleMovieDownload("480p")} />
-              <DownloadBlock label="720p" bg="#2563EB" size={movie.file_size || SIZE_EST["720p"]} onClick={() => handleMovieDownload("720p")} />
-              <DownloadBlock label="1080p" bg="#059669" size={movie.file_size || SIZE_EST["1080p"]} onClick={() => handleMovieDownload("1080p")} />
-              <DownloadBlock label="4K" bg="#0EA5E9" size={movie.file_size || SIZE_EST["4K"]} onClick={() => handleMovieDownload("4K")} />
-            </div>
+            {qualities.length > 0 ? (
+              <div className="flex flex-wrap gap-3">
+                {qualities.map((q) => (
+                  <DBtn key={q.label} onClick={() => goToPlayer(q.url)} bg={qualityBtnColor(q.label)}>
+                    {q.label}
+                  </DBtn>
+                ))}
+              </div>
+            ) : (
+              <p className="text-sm text-[#64748B]">Download links for this title are being updated — please check back soon.</p>
+            )}
           </>
         )}
 
@@ -309,14 +389,6 @@ function DBtn({ children, onClick, bg }: { children: React.ReactNode; onClick: (
     <button onClick={onClick} className="inline-flex items-center gap-2 px-5 py-2.5 rounded text-white font-semibold text-sm hover:opacity-90" style={{ background: bg }}>
       <Download size={16} /> {children}
     </button>
-  );
-}
-function DownloadBlock({ label, onClick, bg, size }: { label: string; onClick: () => void; bg: string; size: string }) {
-  return (
-    <div className="flex flex-col items-start gap-1">
-      <DBtn onClick={onClick} bg={bg}>{label}</DBtn>
-      <span className="text-[11px] text-[#64748B] pl-1">{size}</span>
-    </div>
   );
 }
 function platformColor(p: string) {

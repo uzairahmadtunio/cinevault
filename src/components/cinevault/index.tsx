@@ -1,11 +1,15 @@
 import { useEffect, useState, useMemo, useRef } from "react";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Search, Send, Menu, X, ChevronDown, ChevronLeft, ChevronRight,
   Download, Info, Home, Flame, Film, MoreHorizontal, Play, Star,
 } from "lucide-react";
 import { publicClient, qualityColor, FALLBACK_MOVIES, FEATURED_FALLBACK, cleanTitle, type Movie, type EpisodeLink } from "@/lib/supabase";
-import { fetchMovies, fetchFeaturedOrLatest, fetchTrendingOrTopRated } from "@/lib/api/server.movies";
+import { fetchFeaturedOrLatest } from "@/lib/api/server.movies";
+import { STREAM_MODE_FREE, useSiteMode } from "@/lib/siteMode";
+import { pickBestQualityLink, validRating } from "@/lib/mediaHelpers";
+import { buildStreamUrl } from "@/utils/linkBypasser";
+import { fuzzyFind, getSearchIndex, type SearchIndexItem } from "@/lib/searchIndex";
 
 /* ---------------- Toast ---------------- */
 type ToastMsg = { id: number; text: string };
@@ -50,43 +54,86 @@ export function QualityBadge({ quality, className = "" }: { quality?: string | n
 
 /* ---------------- Movie Card ---------------- */
 export function MovieCard({ movie, className = "", aspect = "2/3" }: { movie: Partial<Movie>; className?: string; aspect?: "2/3" | "16/9" }) {
+  const navigate = useNavigate();
+  const { mode } = useSiteMode();
   const thumb = movie.thumbnail && movie.thumbnail.trim() !== "" && movie.thumbnail !== "N/A" && movie.thumbnail !== "null"
     ? movie.thumbnail
     : null;
 
   const aspectStyle = aspect === "16/9" ? { aspectRatio: "16 / 9" } : { aspectRatio: "2 / 3" };
+  const rating = validRating(movie.imdb_rating);
+  // In Stream Mode a card click plays the title directly (best valid quality);
+  // in Download Mode — or when no playable link exists — it opens the detail page.
+  const bestStream = mode === "stream" ? pickBestQualityLink(movie) : null;
+
+  const goDetail = () => navigate({ to: "/movie/$id", params: { id: String(movie.id) } });
+  const handleClick = () => {
+    if (mode === "stream" && bestStream) {
+      window.location.assign(
+        buildStreamUrl(bestStream.url, {
+          id: movie.id,
+          title: cleanTitle(movie.title),
+          poster: thumb,
+        }),
+      );
+    } else {
+      goDetail();
+    }
+  };
 
   return (
-    <Link
-      to="/movie/$id"
-      params={{ id: String(movie.id) }}
-      className={`group block w-full max-w-[200px] rounded-lg overflow-hidden bg-[#0D1321] border border-[rgba(14,165,233,0.2)] transition-all duration-200 hover:scale-[1.04] hover:glow-cyan ${className}`}
+    <div
+      onClick={handleClick}
+      className={`group block w-full max-w-[200px] rounded-lg overflow-hidden bg-[#0D1321] border border-[rgba(14,165,233,0.2)] transition-all duration-200 hover:scale-[1.04] hover:glow-cyan cursor-pointer ${className}`}
     >
       <div className="relative w-full overflow-hidden bg-[#111827] flex items-center justify-center" style={aspectStyle}>
         {thumb ? (
-          <img 
-            src={thumb} 
-            alt={movie.title ?? "Poster"} 
-            loading="lazy" 
-            className="w-full h-full object-cover" 
+          <img
+            src={thumb}
+            alt={movie.title ?? "Poster"}
+            loading="lazy"
+            className="w-full h-full object-cover"
             onError={(e) => {
               e.currentTarget.onerror = null;
               e.currentTarget.src = titlePosterDataUrl(movie.title ?? "");
             }}
           />
         ) : (
-          <img 
-            src={titlePosterDataUrl(movie.title ?? "")} 
-            alt={movie.title ?? "Poster"} 
-            loading="lazy" 
-            className="w-full h-full object-cover" 
+          <img
+            src={titlePosterDataUrl(movie.title ?? "")}
+            alt={movie.title ?? "Poster"}
+            loading="lazy"
+            className="w-full h-full object-cover"
           />
         )}
         <div className="absolute top-2 left-2"><QualityBadge quality={movie.quality} /></div>
-        {movie.imdb_rating != null && (
+        {rating != null && (
           <div className="absolute top-2 right-2 flex items-center gap-1 bg-black/70 px-1.5 py-0.5 rounded text-[10px] font-bold text-yellow-400">
-            <Star size={10} fill="currentColor" /> {Number(movie.imdb_rating).toFixed(1)}
+            <Star size={10} fill="currentColor" /> {rating.toFixed(1)}
           </div>
+        )}
+        {mode === "stream" && bestStream && (
+          <>
+            {/* Play overlay */}
+            <div className="absolute inset-0 flex items-center justify-center bg-black/35 opacity-0 group-hover:opacity-100 transition-opacity duration-200">
+              <span className="w-12 h-12 rounded-full bg-[#06B6D4]/90 shadow-[0_0_20px_rgba(6,182,212,0.5)] flex items-center justify-center text-white">
+                <Play size={20} fill="currentColor" className="ml-0.5" />
+              </span>
+            </div>
+            {/* Info affordance: still reach the detail page in Stream Mode */}
+            <button
+              type="button"
+              aria-label="View details"
+              title="View details"
+              onClick={(e) => {
+                e.stopPropagation();
+                goDetail();
+              }}
+              className="absolute bottom-2 right-2 z-10 w-7 h-7 rounded-full bg-black/70 border border-white/25 text-white flex items-center justify-center hover:bg-black/90 transition"
+            >
+              <Info size={14} />
+            </button>
+          </>
         )}
       </div>
       <div className="p-2">
@@ -95,7 +142,7 @@ export function MovieCard({ movie, className = "", aspect = "2/3" }: { movie: Pa
           {[movie.year, movie.language, movie.format].filter(Boolean).join(" · ")}
         </p>
       </div>
-    </Link>
+    </div>
   );
 }
 
@@ -107,6 +154,38 @@ export function MovieCardSkeleton({ className = "" }: { className?: string }) {
         <div className="h-3 bg-[#111827] rounded animate-pulse" />
         <div className="h-2 bg-[#111827] rounded w-2/3 animate-pulse" />
       </div>
+    </div>
+  );
+}
+
+/* ---------------- Download / Stream mode toggle ---------------- */
+export function ModeToggle() {
+  const { mode, setMode } = useSiteMode();
+  const base = "px-2 sm:px-2.5 py-1 rounded-full transition whitespace-nowrap";
+  return (
+    <div
+      className="flex items-center rounded-full border border-[rgba(14,165,233,0.35)] bg-[#0D1321] p-0.5 text-[10px] sm:text-[11px] font-bold"
+      role="group"
+      aria-label="Site mode: switch between Download and Stream"
+    >
+      <button
+        type="button"
+        onClick={() => setMode("download")}
+        className={`${base} ${mode === "download" ? "bg-[#06B6D4] text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]" : "text-[#94A3B8] hover:text-white"}`}
+        aria-pressed={mode === "download"}
+      >
+        Download
+      </button>
+      <button
+        type="button"
+        onClick={() => STREAM_MODE_FREE && setMode("stream")}
+        disabled={!STREAM_MODE_FREE}
+        title={STREAM_MODE_FREE ? "Stream Mode — watch instantly, Netflix-style" : "Stream Mode — coming soon"}
+        className={`${base} ${mode === "stream" ? "bg-[#06B6D4] text-white shadow-[0_0_10px_rgba(6,182,212,0.4)]" : "text-[#94A3B8] hover:text-white"} ${!STREAM_MODE_FREE ? "opacity-50 cursor-not-allowed" : ""}`}
+        aria-pressed={mode === "stream"}
+      >
+        ▶ Stream{!STREAM_MODE_FREE ? " · Soon" : ""}
+      </button>
     </div>
   );
 }
@@ -145,7 +224,8 @@ export function Navbar({ onOpenSearch }: { onOpenSearch: () => void }) {
             </span>
           </NavAdultLink>
         </nav>
-        <div className="ml-auto flex items-center gap-3">
+        <div className="ml-auto flex items-center gap-2 sm:gap-3">
+          <ModeToggle />
           <button onClick={onOpenSearch} className="text-[#F1F5F9] hover:text-[#06B6D4]" aria-label="search"><Search size={20} /></button>
           <a href="https://t.me/cinevaultmoviesdownload" target="_blank" rel="noreferrer" className="text-[#F1F5F9] hover:text-[#06B6D4]" aria-label="telegram"><Send size={20} /></a>
         </div>
@@ -394,24 +474,44 @@ export function NoticePopup() {
 /* ---------------- Search Overlay ---------------- */
 export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [q, setQ] = useState("");
-  const [results, setResults] = useState<Movie[]>([]);
+  const [results, setResults] = useState<Partial<Movie>[]>([]);
   const [loading, setLoading] = useState(false);
+  const [index, setIndex] = useState<SearchIndexItem[]>([]);
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, onClose]);
+  // Load the (cached) title index once when the overlay opens — matching then
+  // happens entirely on-device, so typing never waits on the network.
   useEffect(() => {
-    if (!q.trim()) { setResults([]); return; }
+    if (!open) return;
+    let cancelled = false;
+    getSearchIndex().then((items) => {
+      if (!cancelled) setIndex(items);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [open ]);
+  useEffect(() => {
+    if (!q.trim()) { setResults([]); setLoading(false); return; }
     setLoading(true);
-    const t = setTimeout(async () => {
-      const res = await fetchMovies({ data: { mode: "search", q, limit: 24 } });
-      setResults((res?.movies as Movie[]) || []);
+    const t = setTimeout(() => {
+      const hits = fuzzyFind(index, q, 24);
+      setResults(
+        hits.map((h) => ({
+          id: h.item.id,
+          title: h.item.title,
+          thumbnail: h.item.thumbnail,
+          year: h.item.year,
+        })),
+      );
       setLoading(false);
-    }, 250);
+    }, 120);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, index]);
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[90] overflow-y-auto" style={{ background: "rgba(8,12,20,0.97)" }}>

@@ -1,13 +1,21 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
-import { Download, ShieldCheck, Copy, AlertCircle, Home, Play, Info, Check, RefreshCw, Settings, Captions } from "lucide-react";
-import { SiteShell, showToast } from "@/components/cinevault";
-import { decodeUrl, clientSideExtract } from "@/utils/linkBypasser";
-import { extractDirectLink } from "@/lib/api/server.movies";
+import { Download, ShieldCheck, Copy, AlertCircle, Home, Play, Info, Check, RefreshCw, Settings, Captions, SkipForward } from "lucide-react";
+import { SiteShell, showToast, type Movie } from "@/components/cinevault";
+import { buildStreamUrl, decodeUrl, clientSideExtract, isValidStreamTarget } from "@/utils/linkBypasser";
+import { extractDirectLink, fetchMovieById } from "@/lib/api/server.movies";
+import { episodeBestLink, episodeNumber, parseEpisodes } from "@/lib/mediaHelpers";
+import { findContinueWatching, removeContinueWatching, upsertContinueWatching } from "@/lib/continueWatching";
 
 export const Route = createFileRoute("/download/stream")({
   validateSearch: (search: Record<string, any>) => ({
     target: search.target as string | undefined,
+    // Optional metadata used for Continue Watching + Next Episode.
+    mid: search.mid != null && search.mid !== "" ? String(search.mid) : undefined,
+    title: search.title as string | undefined,
+    poster: search.poster as string | undefined,
+    ep: search.ep != null && search.ep !== "" && !Number.isNaN(Number(search.ep)) ? Number(search.ep) : undefined,
+    t: search.t != null && search.t !== "" && !Number.isNaN(Number(search.t)) ? Number(search.t) : undefined,
   }),
   component: DownloadStreamPage,
 });
@@ -23,7 +31,7 @@ type SubtitleTrack = {
 };
 
 function DownloadStreamPage() {
-  const { target } = Route.useSearch();
+  const { target, mid, title, poster, ep, t } = Route.useSearch();
   const [decodedUrl, setDecodedUrl] = useState<string | null>(null);
   
   // Multi-quality & subtitle states
@@ -75,6 +83,10 @@ function DownloadStreamPage() {
   // Countdown and extraction pipeline
   useEffect(() => {
     if (!decodedUrl) return;
+    // A stored link that is not an absolute file-host URL (e.g. a category
+    // path) can never resolve to a stream — the error card handles it, and we
+    // must not enter the bypass flow or build any gateway URL from it.
+    if (!isValidStreamTarget(decodedUrl)) return;
 
     if (secondsLeft > 0) {
       const messages = [
@@ -191,6 +203,101 @@ function DownloadStreamPage() {
       }
     }
   }, [activeSubtitle, activeStream]); // re-apply when subtitle or stream source changes
+
+  /* ---------------- Continue Watching (localStorage) ---------------- */
+  const lastSaveRef = useRef(0);
+  const resumeAppliedRef = useRef(false);
+  const [nextEp, setNextEp] = useState<{ num: number; url: string } | null>(null);
+
+  // A fresh stream starts a fresh resume decision.
+  useEffect(() => {
+    resumeAppliedRef.current = false;
+  }, [activeStream]);
+
+  const saveProgress = () => {
+    const v = videoRef.current;
+    if (!v || !mid || !target) return;
+    const pos = v.currentTime;
+    const dur = v.duration;
+    if (!dur || !Number.isFinite(dur) || pos < 3) return;
+    if (pos >= dur - 15) {
+      // (Nearly) finished — drop it from Continue Watching.
+      removeContinueWatching(mid, ep);
+      return;
+    }
+    upsertContinueWatching({
+      id: mid,
+      title: title || "Unknown title",
+      poster: poster || undefined,
+      target,
+      ep: ep ?? undefined,
+      position: pos,
+      duration: dur,
+      updatedAt: Date.now(),
+    });
+  };
+  const saveProgressRef = useRef(saveProgress);
+  saveProgressRef.current = saveProgress;
+
+  // Save on tab close / navigation away.
+  useEffect(() => {
+    const onUnload = () => saveProgressRef.current();
+    window.addEventListener("beforeunload", onUnload);
+    return () => window.removeEventListener("beforeunload", onUnload);
+  }, []);
+
+  const handleLoadedMetadata = () => {
+    const v = videoRef.current;
+    if (!v || resumeAppliedRef.current) return;
+    resumeAppliedRef.current = true;
+    let startAt = t && t > 0 ? t : 0;
+    if (!startAt && mid) {
+      const entry = findContinueWatching(mid, ep);
+      if (entry && entry.position > 5 && (!entry.duration || entry.position < entry.duration - 15)) {
+        startAt = entry.position;
+      }
+    }
+    if (startAt > 0) {
+      try {
+        v.currentTime = startAt;
+      } catch {
+        /* seeking can race metadata; ignore */
+      }
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    const now = Date.now();
+    if (now - lastSaveRef.current > 5000) {
+      lastSaveRef.current = now;
+      saveProgress();
+    }
+  };
+
+  /* ---------------- Next Episode ---------------- */
+  useEffect(() => {
+    if (!mid || ep == null) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetchMovieById({ data: { id: mid } });
+        const mv = res?.movie as Movie | null;
+        if (!mv || cancelled) return;
+        const eps = parseEpisodes(mv);
+        const idx = eps.findIndex((e, i) => episodeNumber(e, i) === ep);
+        if (idx >= 0 && idx < eps.length - 1) {
+          const nxt = eps[idx + 1];
+          const link = episodeBestLink(nxt);
+          if (link && !cancelled) setNextEp({ num: episodeNumber(nxt, idx + 1), url: link });
+        }
+      } catch {
+        /* Next Episode is a nicety — never break the player for it */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [mid, ep]);
 
   // Fluid quality switcher
   const handleQualityChange = (stream: StreamQuality) => {
@@ -328,6 +435,37 @@ function DownloadStreamPage() {
                 <Home size={18} />
                 Return to Home
               </Link>
+            </div>
+          ) : decodedUrl && !isValidStreamTarget(decodedUrl) ? (
+            /* UNPLAYABLE STORED LINK — e.g. a category path was stored as this
+               title's link. Show a clear message; never enter the bypass flow
+               and never build a gateway URL from it. */
+            <div className="bg-[#0D1321] border border-yellow-500/30 rounded-xl p-8 text-center shadow-[0_0_30px_rgba(234,179,8,0.08)] animate-fade-up max-w-lg mx-auto">
+              <AlertCircle size={56} className="text-yellow-500 mx-auto mb-4" />
+              <h1 className="text-2xl font-bold text-white mb-2">This link can't be played</h1>
+              <p className="text-[#64748B] mb-8 max-w-sm mx-auto">
+                The stored link for this title points to a listing page instead of a playable file,
+                so there is nothing for the player to open. Please go back and pick another quality for this title.
+              </p>
+              {mid ? (
+                <Link
+                  to="/movie/$id"
+                  params={{ id: mid }}
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-600 hover:to-cyan-500 text-white rounded-lg font-semibold shadow-lg hover:scale-105 transition duration-300"
+                  style={{ boxShadow: "0 0 20px rgba(6, 182, 212, 0.25)" }}
+                >
+                  ← Back to Title
+                </Link>
+              ) : (
+                <a
+                  href="/"
+                  className="inline-flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-600 hover:to-cyan-500 text-white rounded-lg font-semibold shadow-lg hover:scale-105 transition duration-300"
+                  style={{ boxShadow: "0 0 20px rgba(6, 182, 212, 0.25)" }}
+                >
+                  <Home size={18} />
+                  Return to Home
+                </a>
+              )}
             </div>
           ) : (
             /* SECURE INTERCEPT PLAYER HUB */
@@ -496,6 +634,12 @@ function DownloadStreamPage() {
                         className="w-full h-full object-contain"
                         preload="metadata"
                         style={{ outline: "none" }}
+                        onLoadedMetadata={handleLoadedMetadata}
+                        onTimeUpdate={handleTimeUpdate}
+                        onPause={() => saveProgress()}
+                        onEnded={() => {
+                          if (mid) removeContinueWatching(mid, ep);
+                        }}
                       >
                         {/* Inject subtitles dynamically */}
                         {subtitles.map((sub) => (
@@ -532,6 +676,22 @@ function DownloadStreamPage() {
                   )}
                 </div>
               </div>
+
+              {/* NEXT EPISODE */}
+              {nextEp && (
+                <div className="flex justify-end">
+                  <button
+                    onClick={() =>
+                      window.location.assign(
+                        buildStreamUrl(nextEp.url, { id: mid, title, poster, ep: nextEp.num }),
+                      )
+                    }
+                    className="inline-flex items-center gap-2 px-5 py-2.5 rounded-lg bg-[#06B6D4] hover:bg-[#0891B2] text-white font-bold text-sm shadow-[0_0_20px_rgba(6,182,212,0.25)] transition cursor-pointer"
+                  >
+                    Next Episode {nextEp.num} <SkipForward size={16} />
+                  </button>
+                </div>
+              )}
 
               {/* FORMAT COMPATIBILITY BLOCK */}
               {activeStream && isMkv && (

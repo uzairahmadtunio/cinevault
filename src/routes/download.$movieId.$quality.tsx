@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Download, AlertCircle } from "lucide-react";
-import { SiteShell, cleanTitle, titlePosterDataUrl, showToast, type Movie } from "@/components/cinevault";
+import { AlertCircle, Play } from "lucide-react";
+import { SiteShell, cleanTitle, titlePosterDataUrl, type Movie } from "@/components/cinevault";
 import { fetchMovieById } from "@/lib/api/server.movies";
-import { getBypassedUrl } from "@/utils/linkBypasser";
+import { buildStreamUrl, isValidStreamTarget } from "@/utils/linkBypasser";
+import { cleanFileSize, validQualities } from "@/lib/mediaHelpers";
 
 export const Route = createFileRoute("/download/$movieId/$quality")({
   component: DownloadPage,
@@ -21,7 +22,6 @@ function DownloadPage() {
   const { movieId, quality } = Route.useParams();
   const [movie, setMovie] = useState<Movie | null>(null);
   const [loading, setLoading] = useState(true);
-  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -65,21 +65,6 @@ function DownloadPage() {
     }
   };
 
-  const handleGenerateLink = () => {
-    const link = getDownloadLink();
-    if (link) {
-      setDownloading(true);
-      setTimeout(() => {
-        const bypassed = getBypassedUrl(link);
-        window.open(bypassed, "_blank", "noopener");
-        setDownloading(false);
-        showToast(`Download started for ${quality} quality!`);
-      }, 300);
-    } else {
-      showToast(`No download link available for ${quality}`);
-    }
-  };
-
   // Sanitize title for filename
   const sanitizeFilename = (title: string): string => {
     return title
@@ -87,6 +72,30 @@ function DownloadPage() {
       .replace(/[^\w.-]/g, "")
       .slice(0, 100);
   };
+
+  const rawLink = getDownloadLink();
+  // A stored link that is not an absolute file-host URL (e.g. a category path
+  // saved as the 4K "link") is treated as unavailable — never sent to the player.
+  const linkValid = isValidStreamTarget(rawLink);
+  const playerUrl =
+    movie && linkValid && rawLink
+      ? buildStreamUrl(rawLink, {
+          id: movieId,
+          title: cleanTitle(movie.title),
+          poster: movie.thumbnail,
+        })
+      : null;
+
+  // No more "Generate Download Link" click: as soon as the title is loaded and
+  // its link checks out, advance straight to the player (which holds the actual
+  // Download button). Old /download/:id/:quality links keep working this way.
+  useEffect(() => {
+    if (!playerUrl) return;
+    const t = setTimeout(() => {
+      window.location.replace(playerUrl);
+    }, 600);
+    return () => clearTimeout(t);
+  }, [playerUrl]);
 
   if (loading) {
     return (
@@ -118,7 +127,8 @@ function DownloadPage() {
     );
   }
 
-  const downloadLink = getDownloadLink();
+  const workingQualities = validQualities(movie);
+  const cleanedSize = cleanFileSize(movie.file_size);
 
   return (
     <SiteShell>
@@ -210,45 +220,61 @@ function DownloadPage() {
               <div className="flex justify-between items-center py-3">
                 <span className="text-[#64748B] font-medium">Size</span>
                 <span className="text-[#F1F5F9] font-bold">
-                  {movie.file_size || SIZE_EST[quality] || "~1-2 GB"}
+                  {cleanedSize || SIZE_EST[quality] || "~1-2 GB"}
                 </span>
               </div>
             </div>
           </div>
 
-          {/* DOWNLOAD ACTION SECTION */}
-          <div className="text-center">
-            <button
-              onClick={handleGenerateLink}
-              disabled={!downloadLink || downloading}
-              className={`
-                inline-flex items-center gap-3 px-8 py-4 rounded-lg font-bold text-lg text-white
-                transition-all duration-300 transform hover:scale-105
-                disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100
-                ${
-                  downloadLink
-                    ? "bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-600 hover:to-cyan-500 shadow-lg"
-                    : "bg-gray-600 cursor-not-allowed"
-                }
-              `}
-              style={
-                downloadLink
-                  ? { boxShadow: "0 0 30px rgba(6, 182, 212, 0.4)" }
-                  : undefined
-              }
-            >
-              <Download size={24} />
-              {downloading ? "Generating Link..." : "Generate Download Link"}
-            </button>
-
-            {/* Helper Text */}
-            <p className="text-[#64748B] text-sm mt-4">
-              Note: Use Chrome / IDM / ADM for better download experience
-            </p>
-          </div>
+          {/* ACTION SECTION */}
+          {playerUrl ? (
+            <div className="text-center">
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-cyan-500 mx-auto mb-4"></div>
+              <p className="text-[#CBD5E1] font-semibold mb-2">Preparing your {quality.toUpperCase()} stream…</p>
+              <p className="text-[#64748B] text-sm mb-6">The player page has your Watch &amp; Download buttons.</p>
+              <button
+                onClick={() => window.location.replace(playerUrl)}
+                className="inline-flex items-center gap-2 px-8 py-3.5 rounded-lg font-bold text-white bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-600 hover:to-cyan-500 shadow-lg transition cursor-pointer"
+                style={{ boxShadow: "0 0 30px rgba(6, 182, 212, 0.4)" }}
+              >
+                <Play size={20} fill="currentColor" /> Continue to Player
+              </button>
+            </div>
+          ) : (
+            <div className="text-center bg-[#0D1321] border border-yellow-500/25 rounded-xl p-8">
+              <AlertCircle size={40} className="text-yellow-500 mx-auto mb-3" />
+              <h2 className="text-lg font-bold text-[#F1F5F9] mb-2">
+                The {quality.toUpperCase()} link for this title isn't available
+              </h2>
+              <p className="text-[#64748B] text-sm mb-6 max-w-md mx-auto">
+                This quality's stored link is missing or invalid, so it can't be played or downloaded.
+                {workingQualities.length > 0 ? " These qualities work for this title:" : " No working qualities are listed for this title yet — please check back later."}
+              </p>
+              {workingQualities.length > 0 && (
+                <div className="flex flex-wrap justify-center gap-3">
+                  {workingQualities.map((q) => (
+                    <button
+                      key={q.label}
+                      onClick={() =>
+                        window.location.assign(
+                          buildStreamUrl(q.url, {
+                            id: movieId,
+                            title: cleanTitle(movie.title),
+                            poster: movie.thumbnail,
+                          }),
+                        )
+                      }
+                      className="inline-flex items-center gap-2 px-6 py-3 rounded-lg font-bold text-white bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-600 hover:to-cyan-500 shadow-lg transition cursor-pointer"
+                    >
+                      <Play size={16} fill="currentColor" /> Watch / Download {q.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </SiteShell>
   );
 }
-

@@ -364,6 +364,41 @@ export const fetchTrendingOrTopRated = createServerFn({ method: "POST" })
     }
   });
 
+// Lightweight catalog index for the client-side smart search: id/title/poster/year
+// for every movie, fetched once by the browser and cached there. No per-keystroke
+// queries ever hit the server.
+export const fetchSearchIndex = createServerFn({ method: "POST" })
+  .validator(z.object({}))
+  .handler(async () => {
+    try {
+      const items: { id: string; title: string; thumbnail: string | null; year: number | null }[] = [];
+      const batchSize = 1000;
+      let offset = 0;
+      while (items.length < 12000) {
+        const { data: rows, error } = await adminClient
+          .from("movies")
+          .select("id, title, thumbnail, year")
+          .order("id", { ascending: true })
+          .range(offset, offset + batchSize - 1);
+        if (error || !rows || rows.length === 0) break;
+        for (const r of rows as any[]) {
+          items.push({
+            id: String(r.id),
+            title: r.title || "",
+            thumbnail: r.thumbnail ?? null,
+            year: r.year ?? null,
+          });
+        }
+        if (rows.length < batchSize) break;
+        offset += batchSize;
+      }
+      return { items };
+    } catch (err) {
+      console.error("fetchSearchIndex error", err);
+      return { items: [] as { id: string; title: string; thumbnail: string | null; year: number | null }[] };
+    }
+  });
+
 // Extract direct stream or file link from ad-heavy download hosts (supports multi-quality & subtitles)
 // Enhanced with HubCloud/MovieDrive specific bypass patterns and resilient fallback mechanisms
 export const extractDirectLink = createServerFn({ method: "POST" })

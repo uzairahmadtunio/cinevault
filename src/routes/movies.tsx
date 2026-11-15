@@ -49,7 +49,7 @@ function MoviesBrowser() {
 
   const [movies, setMovies] = useState<Movie[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [searchInput, setSearchInput] = useState(search || "");
   const [sortBy, setSortBy] = useState(sort || "latest");

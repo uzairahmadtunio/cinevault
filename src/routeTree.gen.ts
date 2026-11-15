@@ -9,50 +9,30 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as SeriesRouteImport } from './routes/series'
-import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
-import { Route as MoviesRouteImport } from './routes/movies'
-import { Route as ContactUsRouteImport } from './routes/contact-us'
-import { Route as AboutUsRouteImport } from './routes/about-us'
-import { Route as R4kMoviesRouteImport } from './routes/4k-movies'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as R4kMoviesRouteImport } from './routes/4k-movies'
+import { Route as AboutUsRouteImport } from './routes/about-us'
+import { Route as ContactUsRouteImport } from './routes/contact-us'
+import { Route as MoviesRouteImport } from './routes/movies'
+import { Route as PrivacyPolicyRouteImport } from './routes/privacy-policy'
+import { Route as SeriesRouteImport } from './routes/series'
 import { Route as AdminIndexRouteImport } from './routes/admin.index'
-import { Route as MoviesSouthIndianRouteImport } from './routes/movies.south-indian'
-import { Route as MoviesHollywoodRouteImport } from './routes/movies.hollywood'
-import { Route as MoviesBollywoodRouteImport } from './routes/movies.bollywood'
-import { Route as MoviesAnimeRouteImport } from './routes/movies.anime'
-import { Route as MovieIdRouteImport } from './routes/movie.$id'
-import { Route as DownloadStreamRouteImport } from './routes/download.stream'
-import { Route as AdminTrendingRouteImport } from './routes/admin.trending'
-import { Route as AdminMoviesRouteImport } from './routes/admin.movies'
-import { Route as AdminFeaturedRouteImport } from './routes/admin.featured'
-import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
 import { Route as AdminAddRouteImport } from './routes/admin.add'
+import { Route as AdminDashboardRouteImport } from './routes/admin.dashboard'
+import { Route as AdminFeaturedRouteImport } from './routes/admin.featured'
+import { Route as AdminMoviesRouteImport } from './routes/admin.movies'
+import { Route as AdminTrendingRouteImport } from './routes/admin.trending'
+import { Route as DownloadStreamRouteImport } from './routes/download.stream'
+import { Route as MovieIdRouteImport } from './routes/movie.$id'
+import { Route as MoviesAnimeRouteImport } from './routes/movies.anime'
+import { Route as MoviesBollywoodRouteImport } from './routes/movies.bollywood'
+import { Route as MoviesHollywoodRouteImport } from './routes/movies.hollywood'
+import { Route as MoviesSouthIndianRouteImport } from './routes/movies.south-indian'
 import { Route as DownloadMovieIdQualityRouteImport } from './routes/download.$movieId.$quality'
 
-const SeriesRoute = SeriesRouteImport.update({
-  id: '/series',
-  path: '/series',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
-  id: '/privacy-policy',
-  path: '/privacy-policy',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MoviesRoute = MoviesRouteImport.update({
-  id: '/movies',
-  path: '/movies',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ContactUsRoute = ContactUsRouteImport.update({
-  id: '/contact-us',
-  path: '/contact-us',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AboutUsRoute = AboutUsRouteImport.update({
-  id: '/about-us',
-  path: '/about-us',
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
 const R4kMoviesRoute = R4kMoviesRouteImport.update({
@@ -60,9 +40,29 @@ const R4kMoviesRoute = R4kMoviesRouteImport.update({
   path: '/4k-movies',
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
+const AboutUsRoute = AboutUsRouteImport.update({
+  id: '/about-us',
+  path: '/about-us',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ContactUsRoute = ContactUsRouteImport.update({
+  id: '/contact-us',
+  path: '/contact-us',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MoviesRoute = MoviesRouteImport.update({
+  id: '/movies',
+  path: '/movies',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyPolicyRoute = PrivacyPolicyRouteImport.update({
+  id: '/privacy-policy',
+  path: '/privacy-policy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SeriesRoute = SeriesRouteImport.update({
+  id: '/series',
+  path: '/series',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminIndexRoute = AdminIndexRouteImport.update({
@@ -70,49 +70,9 @@ const AdminIndexRoute = AdminIndexRouteImport.update({
   path: '/admin/',
   getParentRoute: () => rootRouteImport,
 } as any)
-const MoviesSouthIndianRoute = MoviesSouthIndianRouteImport.update({
-  id: '/south-indian',
-  path: '/south-indian',
-  getParentRoute: () => MoviesRoute,
-} as any)
-const MoviesHollywoodRoute = MoviesHollywoodRouteImport.update({
-  id: '/hollywood',
-  path: '/hollywood',
-  getParentRoute: () => MoviesRoute,
-} as any)
-const MoviesBollywoodRoute = MoviesBollywoodRouteImport.update({
-  id: '/bollywood',
-  path: '/bollywood',
-  getParentRoute: () => MoviesRoute,
-} as any)
-const MoviesAnimeRoute = MoviesAnimeRouteImport.update({
-  id: '/anime',
-  path: '/anime',
-  getParentRoute: () => MoviesRoute,
-} as any)
-const MovieIdRoute = MovieIdRouteImport.update({
-  id: '/movie/$id',
-  path: '/movie/$id',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const DownloadStreamRoute = DownloadStreamRouteImport.update({
-  id: '/download/stream',
-  path: '/download/stream',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdminTrendingRoute = AdminTrendingRouteImport.update({
-  id: '/admin/trending',
-  path: '/admin/trending',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdminMoviesRoute = AdminMoviesRouteImport.update({
-  id: '/admin/movies',
-  path: '/admin/movies',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AdminFeaturedRoute = AdminFeaturedRouteImport.update({
-  id: '/admin/featured',
-  path: '/admin/featured',
+const AdminAddRoute = AdminAddRouteImport.update({
+  id: '/admin/add',
+  path: '/admin/add',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdminDashboardRoute = AdminDashboardRouteImport.update({
@@ -120,10 +80,50 @@ const AdminDashboardRoute = AdminDashboardRouteImport.update({
   path: '/admin/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AdminAddRoute = AdminAddRouteImport.update({
-  id: '/admin/add',
-  path: '/admin/add',
+const AdminFeaturedRoute = AdminFeaturedRouteImport.update({
+  id: '/admin/featured',
+  path: '/admin/featured',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AdminMoviesRoute = AdminMoviesRouteImport.update({
+  id: '/admin/movies',
+  path: '/admin/movies',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminTrendingRoute = AdminTrendingRouteImport.update({
+  id: '/admin/trending',
+  path: '/admin/trending',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DownloadStreamRoute = DownloadStreamRouteImport.update({
+  id: '/download/stream',
+  path: '/download/stream',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MovieIdRoute = MovieIdRouteImport.update({
+  id: '/movie/$id',
+  path: '/movie/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MoviesAnimeRoute = MoviesAnimeRouteImport.update({
+  id: '/anime',
+  path: '/anime',
+  getParentRoute: () => MoviesRoute,
+} as any)
+const MoviesBollywoodRoute = MoviesBollywoodRouteImport.update({
+  id: '/bollywood',
+  path: '/bollywood',
+  getParentRoute: () => MoviesRoute,
+} as any)
+const MoviesHollywoodRoute = MoviesHollywoodRouteImport.update({
+  id: '/hollywood',
+  path: '/hollywood',
+  getParentRoute: () => MoviesRoute,
+} as any)
+const MoviesSouthIndianRoute = MoviesSouthIndianRouteImport.update({
+  id: '/south-indian',
+  path: '/south-indian',
+  getParentRoute: () => MoviesRoute,
 } as any)
 const DownloadMovieIdQualityRoute = DownloadMovieIdQualityRouteImport.update({
   id: '/download/$movieId/$quality',
@@ -288,39 +288,11 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/series': {
-      id: '/series'
-      path: '/series'
-      fullPath: '/series'
-      preLoaderRoute: typeof SeriesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/privacy-policy': {
-      id: '/privacy-policy'
-      path: '/privacy-policy'
-      fullPath: '/privacy-policy'
-      preLoaderRoute: typeof PrivacyPolicyRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/movies': {
-      id: '/movies'
-      path: '/movies'
-      fullPath: '/movies'
-      preLoaderRoute: typeof MoviesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/contact-us': {
-      id: '/contact-us'
-      path: '/contact-us'
-      fullPath: '/contact-us'
-      preLoaderRoute: typeof ContactUsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/about-us': {
-      id: '/about-us'
-      path: '/about-us'
-      fullPath: '/about-us'
-      preLoaderRoute: typeof AboutUsRouteImport
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/4k-movies': {
@@ -330,11 +302,39 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof R4kMoviesRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
+    '/about-us': {
+      id: '/about-us'
+      path: '/about-us'
+      fullPath: '/about-us'
+      preLoaderRoute: typeof AboutUsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/contact-us': {
+      id: '/contact-us'
+      path: '/contact-us'
+      fullPath: '/contact-us'
+      preLoaderRoute: typeof ContactUsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/movies': {
+      id: '/movies'
+      path: '/movies'
+      fullPath: '/movies'
+      preLoaderRoute: typeof MoviesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy-policy': {
+      id: '/privacy-policy'
+      path: '/privacy-policy'
+      fullPath: '/privacy-policy'
+      preLoaderRoute: typeof PrivacyPolicyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/series': {
+      id: '/series'
+      path: '/series'
+      fullPath: '/series'
+      preLoaderRoute: typeof SeriesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/': {
@@ -344,67 +344,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/movies/south-indian': {
-      id: '/movies/south-indian'
-      path: '/south-indian'
-      fullPath: '/movies/south-indian'
-      preLoaderRoute: typeof MoviesSouthIndianRouteImport
-      parentRoute: typeof MoviesRoute
-    }
-    '/movies/hollywood': {
-      id: '/movies/hollywood'
-      path: '/hollywood'
-      fullPath: '/movies/hollywood'
-      preLoaderRoute: typeof MoviesHollywoodRouteImport
-      parentRoute: typeof MoviesRoute
-    }
-    '/movies/bollywood': {
-      id: '/movies/bollywood'
-      path: '/bollywood'
-      fullPath: '/movies/bollywood'
-      preLoaderRoute: typeof MoviesBollywoodRouteImport
-      parentRoute: typeof MoviesRoute
-    }
-    '/movies/anime': {
-      id: '/movies/anime'
-      path: '/anime'
-      fullPath: '/movies/anime'
-      preLoaderRoute: typeof MoviesAnimeRouteImport
-      parentRoute: typeof MoviesRoute
-    }
-    '/movie/$id': {
-      id: '/movie/$id'
-      path: '/movie/$id'
-      fullPath: '/movie/$id'
-      preLoaderRoute: typeof MovieIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/download/stream': {
-      id: '/download/stream'
-      path: '/download/stream'
-      fullPath: '/download/stream'
-      preLoaderRoute: typeof DownloadStreamRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/admin/trending': {
-      id: '/admin/trending'
-      path: '/admin/trending'
-      fullPath: '/admin/trending'
-      preLoaderRoute: typeof AdminTrendingRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/admin/movies': {
-      id: '/admin/movies'
-      path: '/admin/movies'
-      fullPath: '/admin/movies'
-      preLoaderRoute: typeof AdminMoviesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/admin/featured': {
-      id: '/admin/featured'
-      path: '/admin/featured'
-      fullPath: '/admin/featured'
-      preLoaderRoute: typeof AdminFeaturedRouteImport
+    '/admin/add': {
+      id: '/admin/add'
+      path: '/admin/add'
+      fullPath: '/admin/add'
+      preLoaderRoute: typeof AdminAddRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/admin/dashboard': {
@@ -414,12 +358,68 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminDashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/admin/add': {
-      id: '/admin/add'
-      path: '/admin/add'
-      fullPath: '/admin/add'
-      preLoaderRoute: typeof AdminAddRouteImport
+    '/admin/featured': {
+      id: '/admin/featured'
+      path: '/admin/featured'
+      fullPath: '/admin/featured'
+      preLoaderRoute: typeof AdminFeaturedRouteImport
       parentRoute: typeof rootRouteImport
+    }
+    '/admin/movies': {
+      id: '/admin/movies'
+      path: '/admin/movies'
+      fullPath: '/admin/movies'
+      preLoaderRoute: typeof AdminMoviesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/trending': {
+      id: '/admin/trending'
+      path: '/admin/trending'
+      fullPath: '/admin/trending'
+      preLoaderRoute: typeof AdminTrendingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/download/stream': {
+      id: '/download/stream'
+      path: '/download/stream'
+      fullPath: '/download/stream'
+      preLoaderRoute: typeof DownloadStreamRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/movie/$id': {
+      id: '/movie/$id'
+      path: '/movie/$id'
+      fullPath: '/movie/$id'
+      preLoaderRoute: typeof MovieIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/movies/anime': {
+      id: '/movies/anime'
+      path: '/anime'
+      fullPath: '/movies/anime'
+      preLoaderRoute: typeof MoviesAnimeRouteImport
+      parentRoute: typeof MoviesRoute
+    }
+    '/movies/bollywood': {
+      id: '/movies/bollywood'
+      path: '/bollywood'
+      fullPath: '/movies/bollywood'
+      preLoaderRoute: typeof MoviesBollywoodRouteImport
+      parentRoute: typeof MoviesRoute
+    }
+    '/movies/hollywood': {
+      id: '/movies/hollywood'
+      path: '/hollywood'
+      fullPath: '/movies/hollywood'
+      preLoaderRoute: typeof MoviesHollywoodRouteImport
+      parentRoute: typeof MoviesRoute
+    }
+    '/movies/south-indian': {
+      id: '/movies/south-indian'
+      path: '/south-indian'
+      fullPath: '/movies/south-indian'
+      preLoaderRoute: typeof MoviesSouthIndianRouteImport
+      parentRoute: typeof MoviesRoute
     }
     '/download/$movieId/$quality': {
       id: '/download/$movieId/$quality'

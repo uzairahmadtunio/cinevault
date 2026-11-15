@@ -54,6 +54,48 @@ export function getBypassedUrl(externalUrl: string): string {
 }
 
 /**
+ * A stored link is only a plausible stream/download target when it is an
+ * absolute http(s) URL on a real host. Scraped data sometimes stores junk in
+ * link fields — e.g. a relative category path like "/category/2160p-4k/" as a
+ * title's 4K "link" — which used to send users into a dead-end bypass flow
+ * and an on-domain 404. Anything failing this check must be treated as
+ * "no link available" by the UI.
+ */
+export function isValidStreamTarget(url: string | null | undefined): boolean {
+  if (!url) return false;
+  const u = String(url).trim();
+  if (!/^https?:\/\//i.test(u)) return false;
+  try {
+    const parsed = new URL(u);
+    if (!parsed.hostname || !parsed.hostname.includes(".")) return false;
+    // A URL whose path is an app-style listing route is a web page, not a file.
+    if (/^\/(category|tag|movies?|series|download|watch|page|genre)\b/i.test(parsed.pathname)) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Builds the internal player URL for a source link, carrying the metadata the
+ * player needs for Continue Watching / Next Episode (all optional).
+ */
+export function buildStreamUrl(
+  externalUrl: string,
+  opts?: { id?: string | number | null; title?: string | null; poster?: string | null; ep?: number | null },
+): string {
+  const base = getBypassedUrl(externalUrl);
+  if (!opts) return base;
+  const extra = new URLSearchParams();
+  if (opts.id != null && opts.id !== "") extra.set("mid", String(opts.id));
+  if (opts.title) extra.set("title", opts.title);
+  if (opts.poster) extra.set("poster", opts.poster);
+  if (opts.ep != null) extra.set("ep", String(opts.ep));
+  const qs = extra.toString();
+  return qs ? `${base}&${qs}` : base;
+}
+
+/**
  * Client-Side Direct Stream Bypasser and Extractor
  * Attempts to bypass ad gateways directly in the client browser using public CORS proxies.
  * Sequentially resolves: MDrive ➔ HubCloud ➔ PHP Redirect ➔ Direct Whistle/PixelDrain streaming assets.
