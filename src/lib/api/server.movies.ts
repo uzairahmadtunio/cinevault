@@ -11,10 +11,20 @@ function cleanSizeValue(raw: unknown): string | null {
   return s || null;
 }
 function sanitizeMovie<T extends Record<string, any>>(m: T): T {
-  if (m && typeof m === "object" && "file_size" in m) {
-    return { ...m, file_size: cleanSizeValue((m as any).file_size) };
+  if (!m || typeof m !== "object") return m;
+  let out: Record<string, any> = m;
+  if ("file_size" in m) {
+    out = { ...out, file_size: cleanSizeValue((m as any).file_size) };
   }
-  return m;
+  // The movies table stores the season in `season`, while the app
+  // (Movie type, watch page, provider URLs) reads `season_number`.
+  // Without this mapping season_number was always undefined and
+  // provider TV URLs silently targeted Season 1 for every series —
+  // e.g. Monarch (DB season = 2) would have played the wrong season.
+  if ((m as any).season_number == null && (m as any).season != null) {
+    out = { ...out, season_number: (m as any).season };
+  }
+  return out as T;
 }
 function sanitizeMovies<T extends Record<string, any>>(rows: T[] | null | undefined): T[] {
   return (rows || []).map(sanitizeMovie);
@@ -388,32 +398,52 @@ export const fetchTrendingOrTopRated = createServerFn({ method: "POST" })
 export const fetchSearchIndex = createServerFn({ method: "POST" })
   .validator(z.object({}))
   .handler(async () => {
-    try {
-      const items: { id: string; title: string; thumbnail: string | null; year: number | null }[] = [];
+    type IndexItem = {
+      id: string;
+      title: string;
+      thumbnail: string | null;
+      year: number | null;
+      tmdbId: number | null;
+    };
+    // The tmdb_id column is added to the movies table separately (owner
+    // SQL + backfill). Until it exists, selecting it makes PostgREST
+    // error out — so try WITH the column first and fall back to the
+    // plain select. Once the column lands, the index picks it up with
+    // no further deploy, and search can group duplicates by TMDb id.
+    const fetchAll = async (withTmdb: boolean): Promise<{ items: IndexItem[]; failed: boolean }> => {
+      const items: IndexItem[] = [];
       const batchSize = 1000;
       let offset = 0;
       while (items.length < 12000) {
         const { data: rows, error } = await adminClient
           .from("movies")
-          .select("id, title, thumbnail, year")
+          .select(withTmdb ? "id, title, thumbnail, year, tmdb_id" : "id, title, thumbnail, year")
           .order("id", { ascending: true })
           .range(offset, offset + batchSize - 1);
-        if (error || !rows || rows.length === 0) break;
+        if (error) return { items: [], failed: true };
+        if (!rows || rows.length === 0) break;
         for (const r of rows as any[]) {
           items.push({
             id: String(r.id),
             title: r.title || "",
             thumbnail: r.thumbnail ?? null,
             year: r.year ?? null,
+            tmdbId: withTmdb && r.tmdb_id != null ? Number(r.tmdb_id) || null : null,
           });
         }
         if (rows.length < batchSize) break;
         offset += batchSize;
       }
-      return { items };
+      return { items, failed: false };
+    };
+    try {
+      const first = await fetchAll(true);
+      if (!first.failed) return { items: first.items };
+      const fallback = await fetchAll(false);
+      return { items: fallback.items };
     } catch (err) {
       console.error("fetchSearchIndex error", err);
-      return { items: [] as { id: string; title: string; thumbnail: string | null; year: number | null }[] };
+      return { items: [] as IndexItem[] };
     }
   });
 

@@ -25,14 +25,21 @@ export function MyListButton({ movie, variant = "circle", className = "" }: Prop
   const toggle = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    const nowIn = toggleMyList({
+    const res = toggleMyList({
       id: movie.id,
       title: cleanTitle(movie.title) || movie.title,
       poster: movie.thumbnail ?? null,
       backdrop: movie.banner ?? null,
       year: movie.year ?? null,
     });
-    showToast(nowIn ? "Added to My List" : "Removed from My List");
+    if (!res.persisted) {
+      // Never fake success: the entry is NOT stored (browser storage
+      // full/blocked even after cache eviction) and will not survive
+      // a reload — say so instead of showing a hollow ✓.
+      showToast("Couldn't save — browser storage is full");
+    } else {
+      showToast(res.inList ? "Added to My List" : "Removed from My List");
+    }
   };
 
   if (variant === "full") {

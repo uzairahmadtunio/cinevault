@@ -14,11 +14,18 @@ export type SearchIndexItem = {
   display: string; // cleaned title shown to users
   thumbnail: string | null;
   year: number | null;
+  tmdbId: number | null;
+  /** Duplicate-grouping key: one search entry per real-world title.
+   *  TMDb id when the row has one (post-backfill), otherwise the
+   *  normalized display title — scraped season/pack variants of one
+   *  show ("MobLand (Season 1)", "MobLand (Season 1 – 2) …") all
+   *  clean to the same display and so share a group. */
+  group: string;
   norm: string; // normalized title for matching
   tokens: string[];
 };
 
-const CACHE_KEY = "cv_search_index_v1";
+const CACHE_KEY = "cv_search_index_v2";
 const TTL_MS = 24 * 3600 * 1000;
 
 let memoryCache: SearchIndexItem[] | null = null;
@@ -32,7 +39,15 @@ export function normalizeForSearch(s: string): string {
     .replace(/\s+/g, " ");
 }
 
-function prepare(rows: { id: string; title: string; thumbnail: string | null; year: number | null }[]): SearchIndexItem[] {
+type RawIndexRow = {
+  id: string;
+  title: string;
+  thumbnail: string | null;
+  year: number | null;
+  tmdbId?: number | null;
+};
+
+function prepare(rows: RawIndexRow[]): SearchIndexItem[] {
   return rows
     .filter((r) => r && r.title)
     .map((r) => {
@@ -44,12 +59,15 @@ function prepare(rows: { id: string; title: string; thumbnail: string | null; ye
       // normalizer drops those characters anyway).
       const display = cleaned.replace(/^[^\p{L}\p{N}]+/u, "").trim() || cleaned;
       const norm = normalizeForSearch(display);
+      const tmdbId = r.tmdbId != null && Number(r.tmdbId) > 0 ? Number(r.tmdbId) : null;
       return {
         id: String(r.id),
         title: r.title,
         display,
         thumbnail: r.thumbnail ?? null,
         year: r.year ?? null,
+        tmdbId,
+        group: tmdbId ? `t:${tmdbId}` : `n:${norm}`,
         norm,
         tokens: norm ? norm.split(" ") : [],
       };
@@ -74,7 +92,7 @@ export async function getSearchIndex(): Promise<SearchIndexItem[]> {
     inflight = (async () => {
       try {
         const res = await fetchSearchIndex({ data: {} });
-        const items = (res?.items as { id: string; title: string; thumbnail: string | null; year: number | null }[]) || [];
+        const items = (res?.items as RawIndexRow[]) || [];
         if (items.length) {
           memoryCache = prepare(items);
           try {
@@ -139,9 +157,32 @@ function tokenScore(qt: string, tt: string): number {
   return 0;
 }
 
+/** How complete a scraped pack looks from its raw title alone. The
+ *  search index carries no link data, so when several duplicate rows
+ *  tie on match score this picks the representative most likely to be
+ *  the full, playable variant ("Season 1 – 2" pack > single-season
+ *  row; a row still receiving episode updates > a stale shell). The
+ *  detail modal re-resolves to the truly most playable variant from
+ *  full row data when opened, so this only picks the face of the
+ *  group in result lists. */
+function packScore(item: SearchIndexItem): number {
+  const t = item.title.toLowerCase();
+  let s = 0;
+  if (/season\s*1\s*[–—-]\s*\d/.test(t)) s += 4; // "Season 1 – 2" style pack
+  if (/\bcomplete\b/.test(t)) s += 2;
+  const ep = t.match(/ep\s*(\d+)\s*added/);
+  if (ep) s += Math.min(3, parseInt(ep[1], 10) / 25);
+  return s;
+}
+
 /** Typo-tolerant matching: exact/prefix/substring token matches score high;
  *  tokens within Levenshtein distance 1–2 still match, so "Moblnd" finds
- *  "MobLand" and "Avengrs" finds "Avengers". */
+ *  "MobLand" and "Avengrs" finds "Avengers".
+ *
+ *  Results are collapsed to ONE hit per duplicate group (same TMDb id,
+ *  or same cleaned display title): the catalog holds several scraped
+ *  rows for one show and showing five identical "MobLand" cards —
+ *  most of them junk shells — helps no one. */
 export function fuzzyFind(index: SearchIndexItem[], query: string, limit = 8): FuzzyHit[] {
   const q = normalizeForSearch(query);
   if (!q || !index.length) return [];
@@ -173,6 +214,25 @@ export function fuzzyFind(index: SearchIndexItem[], query: string, limit = 8): F
     if (score > 0) hits.push({ item, score });
   }
 
-  hits.sort((a, b) => b.score - a.score || (b.item.year || 0) - (a.item.year || 0));
-  return hits.slice(0, limit);
+  // Collapse duplicate groups: keep each group's best representative
+  // (match score, then pack completeness, then newest row id).
+  const groups = new Map<string, FuzzyHit>();
+  for (const hit of hits) {
+    const key = hit.item.group || `n:${hit.item.norm}`;
+    const cur = groups.get(key);
+    if (!cur) {
+      groups.set(key, hit);
+      continue;
+    }
+    const better =
+      hit.score > cur.score ||
+      (hit.score === cur.score &&
+        (packScore(hit.item) > packScore(cur.item) ||
+          (packScore(hit.item) === packScore(cur.item) &&
+            Number(hit.item.id) > Number(cur.item.id))));
+    if (better) groups.set(key, hit);
+  }
+  const deduped = [...groups.values()];
+  deduped.sort((a, b) => b.score - a.score || (b.item.year || 0) - (a.item.year || 0));
+  return deduped.slice(0, limit);
 }

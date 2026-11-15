@@ -5,6 +5,8 @@
  * on demand through fetchMoviesByIds.
  * ------------------------------------------------------------------ */
 
+import { persistLocal } from "./storage";
+
 export type MyListItem = {
   id: string;
   title: string;
@@ -35,34 +37,39 @@ export function isInMyList(id: string | number): boolean {
   return loadMyList().some((x) => String(x.id) === sid);
 }
 
-function save(list: MyListItem[]) {
-  try {
-    window.localStorage.setItem(KEY, JSON.stringify(list));
-  } catch {
-    /* storage full/blocked — list becomes session-only */
-  }
+/** Persist the list. Returns whether the value is actually stored —
+ *  on quota pressure persistLocal evicts the search-index cache and
+ *  retries, but a full/blocked store can still fail, and callers must
+ *  not claim success in that case. */
+function save(list: MyListItem[]): boolean {
+  const ok = persistLocal(KEY, JSON.stringify(list));
   try {
     window.dispatchEvent(new Event(MY_LIST_EVENT));
   } catch {
     /* noop */
   }
+  return ok;
 }
 
-/** Toggle a title in My List. Returns true when it is in the list afterwards. */
+/** Toggle a title in My List.
+ *  `inList` is the state afterwards AS STORED: when persistence fails
+ *  (storage full/blocked even after cache eviction) an add reports
+ *  { inList: false, persisted: false } so the UI never shows a ✓ for
+ *  an entry that will not survive the next page load. */
 export function toggleMyList(item: {
   id: string | number;
   title: string;
   poster?: string | null;
   backdrop?: string | null;
   year?: number | null;
-}): boolean {
+}): { inList: boolean; persisted: boolean } {
   const list = loadMyList();
   const sid = String(item.id);
   const idx = list.findIndex((x) => String(x.id) === sid);
   if (idx >= 0) {
     list.splice(idx, 1);
-    save(list);
-    return false;
+    const persisted = save(list);
+    return { inList: false, persisted };
   }
   list.unshift({
     id: sid,
@@ -72,8 +79,8 @@ export function toggleMyList(item: {
     year: item.year ?? null,
     addedAt: Date.now(),
   });
-  save(list.slice(0, 200));
-  return true;
+  const persisted = save(list.slice(0, 200));
+  return { inList: persisted, persisted };
 }
 
 export function removeFromMyList(id: string | number) {

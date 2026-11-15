@@ -448,6 +448,30 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
                   {episodes.map((epObj, idx) => {
                     const num = episodeNumber(epObj, idx);
                     const link = episodeBestLink(epObj);
+                    // Fallback targets for episodes whose stored links
+                    // are junk-but-present (e.g. source post-page URLs
+                    // from a bad scrape) or empty: navigate anyway with
+                    // the raw link / the title's best stream. The watch
+                    // page resolves that episode's real candidates (F1
+                    // chain) and, in Stream Mode, its provider servers
+                    // don't depend on the local link at all. Previously
+                    // such rows were rendered dead (no cursor, click did
+                    // nothing) — the gate hit exactly that on MobLand.
+                    const rawLink = ["link_480p", "link_720p", "link_1080p", "link_4k"]
+                      .map((f) => (epObj as any)?.[f])
+                      .find((u) => typeof u === "string" && u.trim());
+                    const epTarget = link || rawLink || pick?.url || null;
+                    const playEpisode = () => {
+                      if (!epTarget) return;
+                      window.location.assign(
+                        buildStreamUrl(epTarget, {
+                          id: movie.id,
+                          title: display,
+                          poster: movie.thumbnail,
+                          ep: num,
+                        }),
+                      );
+                    };
                     const epCw = findContinueWatching(movie.id, num);
                     const extraTitle = episodeDisplayTitle(epObj);
                     const pct =
@@ -458,21 +482,10 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
                     return (
                       <div
                         key={num}
-                        onClick={() => {
-                          if (link) {
-                            window.location.assign(
-                              buildStreamUrl(link, {
-                                id: movie.id,
-                                title: display,
-                                poster: movie.thumbnail,
-                                ep: num,
-                              }),
-                            );
-                          }
-                        }}
+                        onClick={playEpisode}
                         className={`flex items-center gap-4 border-t border-white/10 px-2 ${
                           isCurrent ? "bg-white/5 py-4" : "py-3.5"
-                        } ${link ? "cursor-pointer transition hover:bg-white/5" : "opacity-50"}`}
+                        } ${epTarget ? "cursor-pointer transition hover:bg-white/5" : "opacity-50"}`}
                       >
                         <span className="w-8 flex-none text-center text-xl text-[#E5E5E5]">
                           {num}
@@ -499,9 +512,17 @@ export function TitleDetailModal({ movieId, onClose, onOpenTitle }: Props) {
                             </div>
                           )}
                         </div>
-                        <span className="flex h-9 w-9 flex-none items-center justify-center rounded-full border border-white/40 text-white">
+                        <button
+                          type="button"
+                          aria-label={`Play episode ${num}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            playEpisode();
+                          }}
+                          className="flex h-9 w-9 flex-none items-center justify-center rounded-full border border-white/40 text-white transition hover:border-white hover:bg-white/10"
+                        >
                           <Play size={14} fill="currentColor" />
-                        </span>
+                        </button>
                       </div>
                     );
                   })}

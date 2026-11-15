@@ -1,3 +1,5 @@
+import { persistLocal } from "./storage";
+
 export type CWEntry = {
   id: string; // movie/series id (matches the movies table id, as a string)
   title: string;
@@ -28,11 +30,9 @@ export function loadContinueWatching(): CWEntry[] {
 }
 
 function store(list: CWEntry[]) {
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(list.slice(0, MAX_ENTRIES)));
-  } catch {
-    /* storage full/unavailable — Continue Watching is best-effort */
-  }
+  // Best-effort, but with the same quota self-defense as My List:
+  // evict the search-index cache and retry before giving up.
+  persistLocal(STORAGE_KEY, JSON.stringify(list.slice(0, MAX_ENTRIES)));
 }
 
 export function upsertContinueWatching(entry: CWEntry) {

@@ -195,14 +195,38 @@ export function alternateStreamCandidates(
  * "Links coming soon" row next to a fully-linked one). Journeys should
  * prefer the variant that can actually play. */
 
+const SEASON_MARKER = /^(season|seasons|episode|episodes)$/;
+const SEASON_CODE = /^s\d{1,2}$/;
+const EP_CODE = /^ep\d+$/;
+const ARTICLES = new Set(["the", "a", "an"]);
+
+/** Grouping key for duplicate rows of the same title. Beyond plain
+ *  normalization, the token stream is truncated at the first
+ *  season/episode-pack marker ("season", "s02", "ep09", "episode"):
+ *  scraped variants of one show differ exactly in those suffixes —
+ *  "MobLand (Season 1)", "MobLand (Season 1 – 2) … (S02 EP09 Added)",
+ *  "MobLand (Season 2)" — and must land on ONE key ("mobland") so
+ *  dedupe/variant resolution can group them. Guards: a marker in
+ *  first position never truncates ("Season of the Witch"), and at
+ *  least one non-article token must survive the cut. */
 export function titleKey(raw?: string | null): string {
   if (!raw) return "";
-  return String(raw)
+  const norm = String(raw)
     .toLowerCase()
     .replace(/\((19|20)\d{2}\)/g, " ")
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
     .replace(/\s+/g, " ");
+  if (!norm) return "";
+  const tokens = norm.split(" ");
+  for (let i = 1; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (SEASON_MARKER.test(t) || SEASON_CODE.test(t) || EP_CODE.test(t)) {
+      const head = tokens.slice(0, i);
+      if (head.some((h) => !ARTICLES.has(h))) return head.join(" ");
+    }
+  }
+  return norm;
 }
 
 /** How much of this row can actually play: valid top-level quality links
