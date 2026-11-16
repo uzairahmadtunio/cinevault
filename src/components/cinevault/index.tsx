@@ -563,6 +563,7 @@ export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () =>
   const [results, setResults] = useState<Partial<Movie>[]>([]);
   const [loading, setLoading] = useState(false);
   const [index, setIndex] = useState<SearchIndexItem[]>([]);
+  const [indexReady, setIndexReady] = useState(false);
   const { mode } = useSiteMode();
   const navigate = useNavigate();
   useEffect(() => {
@@ -577,7 +578,10 @@ export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () =>
     if (!open) return;
     let cancelled = false;
     getSearchIndex().then((items) => {
-      if (!cancelled) setIndex(items);
+      if (!cancelled) {
+        setIndex(items);
+        setIndexReady(true);
+      }
     });
     return () => {
       cancelled = true;
@@ -585,6 +589,13 @@ export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () =>
   }, [open ]);
   useEffect(() => {
     if (!q.trim()) { setResults([]); setLoading(false); return; }
+    // The title index is a multi-MB fetch: until it has actually arrived,
+    // an empty result set means "still loading", never "no such title".
+    // Without this gate the overlay declared "No results" for existing
+    // titles whenever a query was typed during the index download
+    // (the debounce computed over the still-empty index and cleared the
+    // loading state 120ms later).
+    if (!indexReady) { setLoading(true); return; }
     setLoading(true);
     const t = setTimeout(() => {
       const hits = fuzzyFind(index, q, 24);
@@ -599,7 +610,7 @@ export function SearchOverlay({ open, onClose }: { open: boolean; onClose: () =>
       setLoading(false);
     }, 120);
     return () => clearTimeout(t);
-  }, [q, index]);
+  }, [q, index, indexReady]);
   if (!open) return null;
 
   // F2: in Stream Mode a result opens the Netflix-style detail modal
