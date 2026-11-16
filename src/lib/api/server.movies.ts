@@ -414,7 +414,12 @@ export const fetchSearchIndex = createServerFn({ method: "POST" })
       const items: IndexItem[] = [];
       const batchSize = 1000;
       let offset = 0;
-      while (items.length < 12000) {
+      // No total cap: page through the WHOLE table (the loop ends on a
+      // short or empty batch below). A previous 12,000-row ceiling here
+      // silently excluded every row past id 12000 from search once the
+      // catalog grew beyond it (14,194 rows by 2026-11-16) — titles like
+      // Titanic and Breaking Bad existed in the DB but were unfindable.
+      while (true) {
         const { data: rows, error } = await adminClient
           .from("movies")
           .select(withTmdb ? "id, title, thumbnail, year, tmdb_id" : "id, title, thumbnail, year")

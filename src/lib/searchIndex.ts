@@ -25,7 +25,13 @@ export type SearchIndexItem = {
   tokens: string[];
 };
 
-const CACHE_KEY = "cv_search_index_v2";
+// v3: the v2 cache could hold an index built while the server-side
+// fetch was capped at 12,000 rows (and, during the 2026-11-16 scrape,
+// while the catalog was still growing) — bumping the key forces every
+// client to refetch the complete index instead of serving the partial
+// one until the 24h TTL expires.
+const CACHE_KEY = "cv_search_index_v3";
+const LEGACY_CACHE_KEYS = ["cv_search_index_v1", "cv_search_index_v2"];
 const TTL_MS = 24 * 3600 * 1000;
 
 let memoryCache: SearchIndexItem[] | null = null;
@@ -97,6 +103,9 @@ export async function getSearchIndex(): Promise<SearchIndexItem[]> {
           memoryCache = prepare(items);
           try {
             window.localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), items }));
+            // Drop the stale partial-index caches so their ~3MB does not
+            // keep eating the origin's localStorage quota.
+            for (const k of LEGACY_CACHE_KEYS) window.localStorage.removeItem(k);
           } catch {
             /* cache is best-effort */
           }

@@ -1,8 +1,8 @@
 /* ------------------------------------------------------------------
  * localStorage persistence with quota self-defense.
  *
- * The catalog search index cache (cv_search_index_v1/v2) is ~2M
- * characters on its own. In a long-lived browser profile it can push
+ * The catalog search index cache (cv_search_index_v1–v3) is ~3.5M
+ * characters on its own at the full 14k-row catalog. In a long-lived browser profile it can push
  * the origin close to its localStorage quota, at which point writes
  * for SMALL but precious user data (My List, Continue Watching)
  * start throwing QuotaExceededError. Previously those throws were
@@ -15,7 +15,7 @@
  * can be honest in the UI instead of faking success.
  * ------------------------------------------------------------------ */
 
-const EVICTABLE_KEYS = ["cv_search_index_v1", "cv_search_index_v2"];
+const EVICTABLE_KEYS = ["cv_search_index_v1", "cv_search_index_v2", "cv_search_index_v3"];
 
 export function persistLocal(key: string, value: string): boolean {
   try {
