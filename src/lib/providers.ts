@@ -4,27 +4,36 @@
  * Landscape verified live 2026-11-16 (see
  * ~/workspace/research_notes/embed-providers-20261116/PROVIDERS.md):
  *
- *   Server 1 · VidLink  — TMDb-native, documented params incl.
+ *   Server 1 · VidNest  — TMDb-native; the ONLY provider that
+ *              actually played in the 2026-11-16 live shootout
+ *              (first click, no popunder, no error). Its own docs
+ *              (vidnest.fun homepage, API Documentation) confirm
+ *              /movie/{tmdbId} and /tv/{tmdbId}/{season}/{episode}
+ *              plus a documented startAt resume param. No sandbox
+ *              (plays clean unsandboxed; a sandbox broke VidSrc).
+ *   Server 2 · VidLink  — TMDb-native, documented params incl.
  *              startAt (resume) + nextbutton. Cleanest embed; no
  *              sandbox (its docs specify plain iframe embedding).
- *   Server 2 · VidSrc   — vidsrc.to wrapper (playback on vidsrc.sh).
+ *              Loads but never played in the 2026-11-16 shootout.
+ *   Server 3 · VidSrc   — vidsrc.to wrapper (playback on vidsrc.sh).
  *              The wrapper injects popunder scripts, BUT VidSrc's
  *              player refuses sandboxed embedding entirely ("This
  *              content can't be embedded in a sandboxed frame",
  *              verified live 2026-11-16) → embedded WITHOUT sandbox.
- *   Server 3 · 2Embed   — IMDb-canonical (TV path needs the IMDb id;
+ *   Server 4 · 2Embed   — IMDb-canonical (TV path needs the IMDb id;
  *              bare TMDb numbers are also accepted per their docs).
  *              Ad scripts present → sandboxed.
- *   Server 4 · CineVault — our own bypass player (not an embed;
+ *   Server 5 · CineVault — our own bypass player (not an embed;
  *              handled by the watch page itself, never built here).
  *
  * None of these providers documents a progress/postMessage event API
  * in the checked report, so Continue Watching positions are only
- * ever READ (VidLink startAt) for provider servers, never written
- * from them — positions are recorded by the bypass player only.
+ * ever READ (VidLink/VidNest startAt) for provider servers, never
+ * written from them — positions are recorded by the bypass player
+ * only.
  * ------------------------------------------------------------------ */
 
-export type ProviderId = "vidlink" | "vidsrc" | "2embed" | "cinevault";
+export type ProviderId = "vidnest" | "vidlink" | "vidsrc" | "2embed" | "cinevault";
 
 export type ProviderContext = {
   tmdbId?: number | null;
@@ -32,7 +41,7 @@ export type ProviderContext = {
   isSeries: boolean;
   season: number;
   episode: number;
-  /** Resume position in seconds (VidLink startAt only). */
+  /** Resume position in seconds (VidLink/VidNest startAt only). */
   startAt?: number | null;
 };
 
@@ -57,8 +66,24 @@ const hasImdb = (ctx: ProviderContext) => Boolean(ctx.imdbId && /^tt\d+$/.test(c
 
 export const PROVIDERS: ProviderDef[] = [
   {
-    id: "vidlink",
+    id: "vidnest",
     serverNo: 1,
+    name: "VidNest",
+    notes: "TMDb-native; only provider that actually played in the 2026-11-16 live shootout (first click, no popunder). Documented startAt resume per vidnest.fun API docs; no autoplay param documented, so none is sent. No sandbox.",
+    sandbox: null,
+    available: (ctx) => hasTmdb(ctx),
+    embedUrl: (ctx) => {
+      if (!hasTmdb(ctx)) return null;
+      const q =
+        ctx.startAt && ctx.startAt > 0 ? `?startAt=${Math.floor(ctx.startAt)}` : "";
+      return ctx.isSeries
+        ? `https://vidnest.fun/tv/${ctx.tmdbId}/${ctx.season}/${ctx.episode}${q}`
+        : `https://vidnest.fun/movie/${ctx.tmdbId}${q}`;
+    },
+  },
+  {
+    id: "vidlink",
+    serverNo: 2,
     name: "VidLink",
     notes: "TMDb-native; startAt resume + in-player next episode; plain iframe per its docs.",
     sandbox: null,
@@ -81,7 +106,7 @@ export const PROVIDERS: ProviderDef[] = [
   },
   {
     id: "vidsrc",
-    serverNo: 2,
+    serverNo: 3,
     name: "VidSrc",
     notes: "Deep catalog; .to wrapper carries popunder scripts, but the player rejects sandboxed frames outright — no sandbox (verified live 2026-11-16).",
     sandbox: null,
@@ -96,7 +121,7 @@ export const PROVIDERS: ProviderDef[] = [
   },
   {
     id: "2embed",
-    serverNo: 3,
+    serverNo: 4,
     name: "2Embed",
     notes: "Multi-server aggregator; IMDb-canonical TV path, bare TMDb numbers accepted per docs — sandboxed.",
     sandbox: SANDBOX_TOKENS,
@@ -111,7 +136,7 @@ export const PROVIDERS: ProviderDef[] = [
   },
   {
     id: "cinevault",
-    serverNo: 4,
+    serverNo: 5,
     name: "CineVault",
     notes: "Our own bypass player — full Continue Watching precision and the F1 fallback chain.",
     sandbox: null,

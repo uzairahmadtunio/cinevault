@@ -382,7 +382,7 @@ function DownloadStreamPage() {
   };
   const availProviders = playerMovie ? availableProviders(providerCtx) : [];
   const defaultServer: ProviderId =
-    mode === "stream" && availProviders.some((p) => p.id === "vidlink") ? "vidlink" : "cinevault";
+    mode === "stream" && availProviders.some((p) => p.id === "vidnest") ? "vidnest" : "cinevault";
   const activeServer: ProviderId =
     serverChoice && (serverChoice === "cinevault" || availProviders.some((p) => p.id === serverChoice))
       ? serverChoice
