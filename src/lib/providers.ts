@@ -8,7 +8,10 @@
  *              startAt (resume) + nextbutton. Cleanest embed; no
  *              sandbox (its docs specify plain iframe embedding).
  *   Server 2 · VidSrc   — vidsrc.to wrapper (playback on vidsrc.sh).
- *              The wrapper injects popunder scripts → sandboxed.
+ *              The wrapper injects popunder scripts, BUT VidSrc's
+ *              player refuses sandboxed embedding entirely ("This
+ *              content can't be embedded in a sandboxed frame",
+ *              verified live 2026-11-16) → embedded WITHOUT sandbox.
  *   Server 3 · 2Embed   — IMDb-canonical (TV path needs the IMDb id;
  *              bare TMDb numbers are also accepted per their docs).
  *              Ad scripts present → sandboxed.
@@ -80,8 +83,8 @@ export const PROVIDERS: ProviderDef[] = [
     id: "vidsrc",
     serverNo: 2,
     name: "VidSrc",
-    notes: "Deep catalog; .to wrapper carries popunder scripts — sandboxed, no popups/top-navigation.",
-    sandbox: SANDBOX_TOKENS,
+    notes: "Deep catalog; .to wrapper carries popunder scripts, but the player rejects sandboxed frames outright — no sandbox (verified live 2026-11-16).",
+    sandbox: null,
     available: (ctx) => hasTmdb(ctx) || hasImdb(ctx),
     embedUrl: (ctx) => {
       const id = hasTmdb(ctx) ? ctx.tmdbId : hasImdb(ctx) ? ctx.imdbId : null;
